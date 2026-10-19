@@ -129,18 +129,18 @@ it('leaves non-API routes with their normal error pages', function () {
 });
 
 /**
- * The four endpoints that M3 implements. Until then they answer 501 and write nothing.
+ * The three endpoints M3 built. Their behaviour is tested in RestockTest, CorrectionTest and AuditTest; here only that
+ * they sit behind the demo user and the supervisor role.
  */
-dataset('stub routes', [
+dataset('supervisor routes', [
     'restock' => ['POST', '/api/pools/{pool}/restocks'],
-    'capacity' => ['PUT', '/api/pools/{pool}/capacity'],
-    'correction' => ['POST', '/api/pools/{pool}/allocations/{allocation}/corrections'],
+    'correction' => ['POST', '/api/pools/{pool}/allocations/1/corrections'],
     'audit' => ['GET', '/api/pools/{pool}/audit'],
 ]);
 
-function stubUri(string $template): string
+function supervisorUri(string $template, Pool $pool): string
 {
-    return str_replace(['{pool}', '{allocation}'], ['1', '1'], $template);
+    return str_replace('{pool}', (string) $pool->id, $template);
 }
 
 function tableCounts(): array
@@ -150,50 +150,52 @@ function tableCounts(): array
         ->all();
 }
 
-it('answers a stub with 501 not_implemented for a supervisor', function (string $method, string $template) {
-    $this->json($method, stubUri($template), [], asUser($this->dana))
-        ->assertStatus(501)
-        ->assertExactJson(['error' => [
-            'code' => 'not_implemented',
-            'message' => 'Available in M3.',
-            'details' => ['milestone' => 'M3'],
-        ]]);
-})->with('stub routes');
+it('keeps the supervisor endpoints behind the supervisor role and the demo user', function (string $method, string $template) {
+    $pool = Pool::factory()->create();
 
-it('keeps a stub behind the supervisor role and the demo user', function (string $method, string $template) {
-    $this->json($method, stubUri($template), [], asUser($this->ana))
+    $this->json($method, supervisorUri($template, $pool), [], asUser($this->ana))
         ->assertStatus(403)
         ->assertJsonPath('error.code', 'forbidden_role');
 
-    $this->json($method, stubUri($template))
+    $this->json($method, supervisorUri($template, $pool))
         ->assertStatus(401)
         ->assertJsonPath('error.code', 'unknown_user');
-})->with('stub routes');
+})->with('supervisor routes');
 
-it('writes nothing when a stub is called', function (string $method, string $template) {
+it('writes nothing when an operator calls a supervisor endpoint', function (string $method, string $template) {
     $pool = Pool::factory()->create();
     DB::table('pools')->where('id', $pool->id)->update(['version' => 5]);
     $before = tableCounts();
 
-    $this->json($method, stubUri($template), ['requested' => 3, 'amount' => 10], asUser($this->dana))->assertStatus(501);
+    $this->json($method, supervisorUri($template, $pool), ['amount' => 10, 'kind' => 'void', 'reason' => 'x'], asUser($this->ana) + ['Idempotency-Key' => 'k'])->assertStatus(403);
 
     expect(tableCounts())->toBe($before)
         ->and(DB::table('pools')->where('id', $pool->id)->value('version'))->toBe(5);
-})->with('stub routes');
+})->with('supervisor routes');
 
-it('registers the four stub routes under /api, behind the demo user and the supervisor role', function () {
+it('registers the supervisor routes under /api, behind the demo user and the supervisor role', function () {
     $routes = collect(Route::getRoutes()->getRoutes())
         ->mapWithKeys(fn ($route) => [implode('|', array_diff($route->methods(), ['HEAD'])).' '.$route->uri() => $route->gatherMiddleware()]);
 
     foreach ([
         'POST api/pools/{pool}/restocks',
-        'PUT api/pools/{pool}/capacity',
-        'POST api/pools/{pool}/allocations/{allocation}/corrections',
+        'POST api/pools/{pool}/allocations/{seq}/corrections',
         'GET api/pools/{pool}/audit',
     ] as $route) {
         expect($routes)->toHaveKey($route)
             ->and($routes[$route])->toContain('demo.user', 'role:supervisor');
     }
+});
+
+it('no longer routes PUT /capacity, so capacity is raised by restocks alone', function () {
+    $pool = Pool::factory()->create();
+
+    $this->putJson("/api/pools/{$pool->id}/capacity", ['capacity' => 10], asUser($this->dana))
+        ->assertNotFound()
+        ->assertJsonPath('error.code', 'not_found');
+
+    $routes = collect(Route::getRoutes()->getRoutes())->map(fn ($route) => $route->uri());
+    expect($routes)->not->toContain('api/pools/{pool}/capacity');
 });
 
 it('lists the four seeded users without any header', function () {

@@ -169,6 +169,24 @@ function correctionCount(array $world): int
     return Correction::where('pool_id', $world['pool']->id)->count();
 }
 
+function postRestock(array $world, mixed $user, array $body, ?string $key = null, bool $withKey = true)
+{
+    $headers = $withKey ? ['Idempotency-Key' => $key ?? (string) Str::uuid()] : [];
+
+    return test()->postJson("/api/pools/{$world['pool']->id}/restocks", $body, $headers + ($user === null ? [] : ['X-Demo-User' => (string) $user->id]));
+}
+
+function postCorrection(array $world, mixed $user, int|string $seq, array $body, ?string $key = null, bool $withKey = true, ?Pool $pool = null)
+{
+    $headers = $withKey ? ['Idempotency-Key' => $key ?? (string) Str::uuid()] : [];
+
+    return test()->postJson(
+        '/api/pools/'.($pool ?? $world['pool'])->id."/allocations/{$seq}/corrections",
+        $body,
+        $headers + ($user === null ? [] : ['X-Demo-User' => (string) $user->id]),
+    );
+}
+
 /**
  * Bind a frozen clock into the container, so the server's "now" is known to the test.
  */

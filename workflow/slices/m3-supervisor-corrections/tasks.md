@@ -194,7 +194,7 @@
 
 ## Phase 3 — API and audit (US1–US6)
 
-### [ ] T016 Add the restock endpoint
+### [x] T016 Add the restock endpoint
 - **Refs:** FR10, FR10.1, FR10.2, FR6.9, FR6.11, AC-US1.1–AC-US1.5, plan §6 "POST /restocks"
 - **Depends on:** T010, T015
 - **Files:** `app/Http/Controllers/Api/RestockController.php` (create), `routes/api.php` (edit), `tests/Feature/RestockTest.php` (edit)
@@ -202,8 +202,9 @@
 - **Verify:** `APP php artisan test --compact tests/Feature/RestockTest.php` → pass with new HTTP cases: Dana +50 gives `201` and remaining 50 (the §4 pool at 0); operator Ana → `403 forbidden_role`, nothing recorded; amount 0, −1, 1.5, "50", missing → `422 validation_failed` with `details.fields`; no note accepted; replay → `200` with the header and the same body; same key different amount → `409`; no key → `400`.
 - **Done when:** AC-US1.1–AC-US1.5 pass over HTTP.
 - **Out of scope:** the screen (T027, T028).
+- Note: Boost queries: search-docs `validation rules integer prohibited` and `route model binding scoping`. Restock HTTP cases were added to RestockTest (27 tests). `RestockResource` added (wrap `restock`), like AllocationResource.
 
-### [ ] T017 Add the correction endpoint
+### [x] T017 Add the correction endpoint
 - **Refs:** FR6, FR6.2, FR6.9, FR6.11, FR6.12, DD10, AC-US2.1–AC-US2.5, AC-US3.1, AC-US3.2, plan §6 "POST …/corrections"
 - **Depends on:** T011, T015
 - **Files:** `app/Http/Controllers/Api/CorrectionController.php` (create), `routes/api.php` (edit), `tests/Feature/CorrectionTest.php` (edit)
@@ -211,8 +212,9 @@
 - **Verify:** `APP php artisan test --compact tests/Feature/CorrectionTest.php` → pass with HTTP cases: §4 lower 40 → 20 over HTTP gives remaining 20; raise 40 → 60 with 0 free gives `422 insufficient_free_units` with needed 20, free 0 and no new row and unchanged `pools.version`; after a restock +50 the same request gives `201` with remaining 30; blank reason, amount 0, fractional, negative, amount on a void, equal amount → `422 validation_failed`; unknown or other-pool seq → `404`; voided entry → `422 allocation_voided`; operator → `403`; no key → `400`; replay → `200` + header.
 - **Done when:** AC-US2.1–AC-US2.5, AC-US3.1 and AC-US3.2 pass over HTTP.
 - **Out of scope:** the screen, the audit endpoint.
+- Note: Boost queries: search-docs `validation rules integer prohibited`, `validation required_if prohibited_if`, `route model binding scoping`. The route is `allocations/{seq}/corrections` with `where('seq', '[1-9][0-9]{0,17}')`, so a non-numeric or zero seq is a plain 404. Validation reads only the fields that were sent (`$request->only`) and `amount` is `nullable` so `amount: null` on a void is accepted. `CorrectionResource` added.
 
-### [ ] T018 Add `AuditService` and the audit endpoint
+### [x] T018 Add `AuditService` and the audit endpoint
 - **Refs:** FR7.1, FR7.2, FR8, FR15, FR16, DD7, DD8, AC-US3.4, AC-US6.1–AC-US6.5, plan §6 "GET /audit"
 - **Depends on:** T008, T009, T014
 - **Files:** `app/Pool/Audit/AuditService.php` (create), `app/Http/Controllers/Api/AuditController.php` (create), `routes/api.php` (edit), `tests/Feature/AuditTest.php` (create)
@@ -220,8 +222,9 @@
 - **Verify:** `APP php artisan test --compact tests/Feature/AuditTest.php` → pass.
 - **Done when:** AC-US3.4 and AC-US6.1–AC-US6.5 pass.
 - **Out of scope:** the screen (T024, T028).
+- Note: Boost query: search-docs `database transactions pessimistic locking lockForUpdate` (read-only REPEATABLE READ helper copied from SnapshotService, unchanged). Audit response also lists `to.seq = null` for an expiry window end. Ran the §4 example and the PRD AC-US3.4 data (window seq 3 → seq 5, lowest -20, correction 6).
 
-### [ ] T019 Remove the capacity stub and `NotImplementedController`; update the stub test
+### [x] T019 Remove the capacity stub and `NotImplementedController`; update the stub test
 - **Refs:** FR10.2, DD11, PQ3, F3, AC-US10.2
 - **Depends on:** T016, T017, T018
 - **Files:** `routes/api.php` (edit), `app/Http/Controllers/Api/NotImplementedController.php` (delete), `tests/Feature/RolesAndStubsTest.php` (edit)
@@ -229,8 +232,9 @@
 - **Verify:** `APP php artisan route:list --path=api` → no capacity route; `APP php artisan test --compact` → whole suite green.
 - **Done when:** no 501 stub remains and the approved test change is the only one (plan §11).
 - **Out of scope:** any other test or route.
+- Note: Boost query: none needed beyond T016 (route removal). CodeGraph showed NotImplementedController's only callers were two routes. PUT /capacity now answers 404 (not 405: the path no longer exists). RolesAndStubsTest: the 501 checks became supervisor-route role checks, a nothing-written check for operators, and the capacity 404 case.
 
-### [ ] T020 Document the new contracts
+### [x] T020 Document the new contracts
 - **Refs:** F3, FR10.2, AC-US10.3, plan §6
 - **Depends on:** T019
 - **Files:** `docs/api-contract.md` (edit)
@@ -238,8 +242,9 @@
 - **Verify:** `grep -n "capacity\|501" docs/api-contract.md` → no live capacity endpoint and no M3 501 row; each new endpoint has request, response and error sections.
 - **Done when:** AC-US10.3 is checkable from the document.
 - **Out of scope:** README (T029).
+- Note: Documentation task, no Boost query. docs/api-contract.md: three endpoints documented, 501 rows removed, new 422 codes, an 'M3 (additive)' section (log fields, keys per table, evaluation instant, broadcast), the Ledger methods in the calculation contract. The log `correction` entry keeps `change {from,to}` and gains `correction_kind` (see T014).
 
-### [ ] T021 Write the concurrency tests for corrections, restocks and submits
+### [x] T021 Write the concurrency tests for corrections, restocks and submits
 - **Refs:** NFR1, NFR2, FR6.10, AC-US7.1, AC-US7.2, AC-US7.3, AC-US7.5
 - **Depends on:** T017, T016
 - **Files:** `tests/Concurrency/ParallelCorrectionTest.php` (create)
@@ -247,8 +252,9 @@
 - **Verify:** `docker compose up -d --wait && APP php artisan test --group=concurrency` → all pass, including the new file, printing the `p95` line.
 - **Done when:** AC-US7.1, AC-US7.2, AC-US7.3 and AC-US7.5 pass on the real stack. If p95 exceeds 1 s, fix the code (lock hold time) only after reporting.
 - **Out of scope:** changing M1/M2 concurrency tests.
+- Note: Boost query: none needed (tests drive the HTTP stack). Results against the stack: raise vs request, 20 rounds, correction won 2 and request won 18 (never both); 52 requests (50x3 + lowering + restock) all 201, p95 0.690 s, restock 0.459 s, correction 0.215 s; two supervisors: one 201, one 422 no_change, remaining +20 once. Needs the helpers of ParallelAllocationTest, like ParallelExpiryTest does.
 
-### [ ] T022 Guard numbering and append-only in `LedgerSequenceTest`
+### [x] T022 Guard numbering and append-only in `LedgerSequenceTest`
 - **Refs:** FR6.8, FR6.10, D7, AC-US7.2
 - **Depends on:** T016, T017
 - **Files:** `tests/Feature/LedgerSequenceTest.php` (edit)
@@ -256,6 +262,7 @@
 - **Verify:** `APP php artisan test --compact tests/Feature/LedgerSequenceTest.php` → pass.
 - **Done when:** append-only and one-numbering are enforced by a test.
 - **Out of scope:** changing `LedgerSequence`.
+- Note: Boost query: none needed. The source scan was checked against three deliberate offenders (raw UPDATE, query-builder delete, model update); all three are caught. postRestock/postCorrection helpers moved to tests/Pest.php so LedgerSequenceTest can use them.
 
 **Checkpoint 3:** with `curl` as Dana (`X-Demo-User` of the seeded supervisor) and a fresh `Idempotency-Key` each time: restock +50 → `201`; correct entry 1 down → `201`; raise beyond free → `422 insufficient_free_units`; `GET /api/pools/1/audit` shows the correction with status before/after; the same calls as Ana → `403`; `PUT /capacity` is not routed. `APP php artisan test --compact` and `--group=concurrency` pass.
 

@@ -100,3 +100,87 @@ it('refuses the same key with a different amount, note or supervisor and records
     'no note' => [fn ($world) => addRestock($world, 50, null, 'key-1')],
     'supervisor' => [fn ($world, $other) => app(RestockService::class)->add($world['pool'], $other, new AddRestock(50, 'Delivery', 'key-1'))],
 ]);
+
+it('restocks over HTTP as a supervisor and returns the new remaining', function () {
+    $world = workedPool();
+
+    $response = postRestock($world, $world['dana'], ['amount' => 50, 'note' => 'Delivery'])
+        ->assertCreated()
+        ->assertJsonPath('pool.remaining', 50)
+        ->assertJsonPath('pool.version', 5)
+        ->assertJsonPath('restock.seq', 5)
+        ->assertJsonPath('restock.actor', ['id' => $world['dana']->id, 'name' => 'Dana'])
+        ->assertJsonPath('restock.amount', 50)
+        ->assertJsonPath('restock.note', 'Delivery');
+
+    expect($response->json('restock.recorded_at'))->toBe('2026-10-17T12:00:00.000000Z')
+        ->and($response->json('restock.id'))->toBeInt();
+
+    // Operators see it in the log, and can use it at once.
+    $snapshot = $this->getJson("/api/pools/{$world['pool']->id}", ['X-Demo-User' => (string) $world['ana']->id])->assertOk();
+    expect($snapshot->json('remaining'))->toBe(50)
+        ->and($snapshot->json('log.0'))->toMatchArray(['kind' => 'restock', 'amount' => 50, 'note' => 'Delivery']);
+});
+
+it('accepts a restock over HTTP without a note', function () {
+    $world = workedPool();
+
+    postRestock($world, $world['dana'], ['amount' => 5])->assertCreated()->assertJsonPath('restock.note', null);
+});
+
+it('refuses an operator and records nothing', function () {
+    $world = workedPool();
+
+    postRestock($world, $world['ana'], ['amount' => 50])->assertForbidden()->assertJsonPath('error.code', 'forbidden_role');
+
+    expect(Restock::where('pool_id', $world['pool']->id)->count())->toBe(1)
+        ->and($world['pool']->fresh()->version)->toBe(4);
+});
+
+it('rejects an amount that is not a whole number of at least 1 and records nothing', function (mixed $amount) {
+    $world = workedPool();
+    $body = $amount === 'missing' ? [] : ['amount' => $amount];
+
+    postRestock($world, $world['dana'], $body)
+        ->assertStatus(422)
+        ->assertJsonPath('error.code', 'validation_failed')
+        ->assertJsonStructure(['error' => ['details' => ['fields' => ['amount']]]]);
+
+    expect(Restock::where('pool_id', $world['pool']->id)->count())->toBe(1);
+})->with([0, -1, 1.5, '50', 'abc', null, 'missing', 2147483648, true]);
+
+it('rejects a note that is not text or is too long', function (mixed $note) {
+    $world = workedPool();
+
+    postRestock($world, $world['dana'], ['amount' => 5, 'note' => $note])->assertStatus(422)->assertJsonPath('error.details.fields.note.0', fn ($m) => is_string($m));
+})->with([12, [['x']], 'long' => fn () => str_repeat('a', 256)]);
+
+it('requires an Idempotency-Key', function () {
+    $world = workedPool();
+
+    postRestock($world, $world['dana'], ['amount' => 5], withKey: false)->assertStatus(400)->assertJsonPath('error.code', 'missing_idempotency_key');
+});
+
+it('replays the same key with 200 and the original body, and refuses a different payload with 409', function () {
+    $world = workedPool();
+    $first = postRestock($world, $world['dana'], ['amount' => 50, 'note' => 'Delivery'], 'K')->assertCreated();
+
+    $replay = postRestock($world, $world['dana'], ['amount' => 50, 'note' => 'Delivery'], 'K')
+        ->assertOk()
+        ->assertHeader('Idempotent-Replayed', 'true');
+
+    expect($replay->json())->toBe($first->json());
+
+    postRestock($world, $world['dana'], ['amount' => 60, 'note' => 'Delivery'], 'K')
+        ->assertStatus(409)
+        ->assertJsonPath('error.code', 'idempotency_key_conflict');
+
+    expect(Restock::where('pool_id', $world['pool']->id)->count())->toBe(2);
+});
+
+it('answers 404 for an unknown pool and 401 without a user', function () {
+    $world = workedPool();
+
+    $this->postJson('/api/pools/999999/restocks', ['amount' => 5], ['Idempotency-Key' => 'k', 'X-Demo-User' => (string) $world['dana']->id])->assertNotFound();
+    postRestock($world, null, ['amount' => 5])->assertStatus(401)->assertJsonPath('error.code', 'unknown_user');
+});

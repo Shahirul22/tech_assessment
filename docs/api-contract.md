@@ -1,6 +1,6 @@
 # API contract: Shared pool
 
-The contract every milestone (M1–M4) builds against. Source of truth: [plan.md](../workflow/slices/m1-shared-pool/plan.md) §6. Endpoints marked **501** are declared now and answer `501 not_implemented` until their slice arrives, so the shape of the API does not change later.
+The contract every milestone (M1–M4) builds against. Source of truth: [plan.md](../workflow/slices/m1-shared-pool/plan.md) §6. M3 turned the four endpoints that were declared as `501` stubs into three real ones and removed `PUT /capacity` (see "M3 (additive)" below).
 
 ## Conventions
 
@@ -20,14 +20,15 @@ Every error on an `/api/*` route has this shape. `details` is always a JSON obje
 
 | Status | `code` | When | `details` |
 |---|---|---|---|
-| 400 | `missing_idempotency_key` | `POST …/allocations` without `Idempotency-Key` | `{}` |
+| 400 | `missing_idempotency_key` | a `POST` that creates a ledger entry (`…/allocations`, `…/restocks`, `…/corrections`) without `Idempotency-Key` | `{}` |
 | 401 | `unknown_user` | `X-Demo-User` missing, malformed or not a seeded user | `{}` |
 | 403 | `forbidden_role` | the user's role may not do this | `{"required_role": "supervisor"}` |
 | 404 | `not_found` | unknown pool, or unknown path | `{}` |
 | 405 | `method_not_allowed` | wrong HTTP method for the path | `{}` |
-| 409 | `idempotency_key_conflict` | same key, different operator, amount or type; nothing recorded | `{}` |
+| 409 | `idempotency_key_conflict` | same key, different payload (operator, amount or type for an allocation; supervisor, amount or note for a restock; supervisor, entry, kind, amount or reason for a correction); nothing recorded | `{}` |
 | 422 | `validation_failed` | bad input | `{"fields": {"requested": ["…"]}}` |
-| 501 | `not_implemented` | a stub endpoint | `{"milestone": "M3"}` |
+| 422 | `insufficient_free_units` | a correction raises an entry by more than the free units (M3) | `{"needed": 20, "free": 0, "allocation_seq": 2}` |
+| 422 | `allocation_voided` | a correction of an entry that was voided, which is final (M3) | `{"allocation_seq": 2}` |
 | 503 | `pool_busy` | the pool lock wait exceeded 5 s; header `Retry-After: 1` | `{}` |
 | 500 | `server_error` | unexpected failure; no internals are returned | `{}` |
 
@@ -51,7 +52,7 @@ The log is one list of all three ledger tables (and M2's derived expiries), newe
 |---|---|---|
 | `allocation` | M1 | `outcome` is `full` (granted = requested), `partial` (0 < granted < requested) or `none` (granted = 0). A zero grant is stored and shown. |
 | `restock` | M1 (seed), M3 | `actor` is `null` for the seeded initial stock. |
-| `correction` | M3 | `change.to` is `null` for a void. |
+| `correction` | M3 | `change.to` is `null` for a void; `change.from` is the units the entry held right before this correction. |
 | `expiry` | M2 | Derived, never stored, so `seq` is `null`. |
 
 ## Endpoints
@@ -118,41 +119,68 @@ The seeded users, for the role switch. No `X-Demo-User` needed.
           {"id":4,"name":"Dana","role":"supervisor","tier":null}]}
 ```
 
-### POST /api/pools/{pool}/restocks (501, implemented in M3)
+### POST /api/pools/{pool}/restocks
 
-Add capacity. Role: `supervisor`. The request and response shapes are fixed by M3; until then the endpoint changes nothing and writes no rows.
+Add units to the pool. Role: `supervisor`. Capacity is raised only by restocks; there is no way to lower it.
 
-**Response `501`**
+**Request**
+
+- Headers: `X-Demo-User`, `Idempotency-Key: <uuid>` (required).
+- Body: `{"amount": 50, "note": "Delivery"}`. `amount` is a JSON whole number from 1 to 2147483647; `note` is optional text of at most 255 characters.
+
+**Response `201`** for a new entry, or **`200` with header `Idempotent-Replayed: true`** when the same key and payload were already stored (the original body is returned):
 
 ```json
-{"error":{"code":"not_implemented","message":"Available in M3.","details":{"milestone":"M3"}}}
+{"restock":{"id":9,"seq":14,"actor":{"id":4,"name":"Dana"},"amount":50,"note":"Delivery","recorded_at":"2026-10-17T13:00:00.000000Z"},
+ "pool":{"version":14,"remaining":50}}
 ```
 
-**Errors:** `401 unknown_user` · `403 forbidden_role` · `501 not_implemented`.
+**Errors:** `400 missing_idempotency_key` · `401 unknown_user` · `403 forbidden_role` · `404 not_found` (pool) · `409 idempotency_key_conflict` (same key, different supervisor, amount or note) · `422 validation_failed` (`amount` not a whole number from 1 to 2147483647, or `note` not text of at most 255 characters; `details.fields`) · `503 pool_busy`.
 
-### PUT /api/pools/{pool}/capacity (501, implemented in M3)
+### POST /api/pools/{pool}/allocations/{seq}/corrections
 
-Set capacity. Role: `supervisor`. Capacity is the sum of restock events (D8), so M3 may merge this with `POST …/restocks`; both are declared because the PRD lists both. Until M3 the endpoint changes nothing and writes no rows.
+Amend or void a past allocation. Role: `supervisor`. `{seq}` is the entry number the log shows: the allocation's `seq` in this pool. A correction is one more ledger entry; the original allocation is never changed.
 
-**Response `501`:** same body as above, `milestone` `M3`.
+**Request**
 
-**Errors:** `401 unknown_user` · `403 forbidden_role` · `501 not_implemented`.
+- Headers: `X-Demo-User`, `Idempotency-Key: <uuid>` (required).
+- Body: `{"kind":"amend","amount":20,"reason":"Counted wrong"}` or `{"kind":"void","reason":"Duplicate entry"}`. `reason` is required text, 1 to 500 characters after trimming. `amount` is required for `amend` (a JSON whole number from 1 to 2147483647) and not allowed for `void`. 0 is not an amount: use `void`.
+- Lowering and voiding are always accepted. A raise is accepted only if the units free right now cover it, except for a Temporary entry whose window has ended, which changes history only.
 
-### POST /api/pools/{pool}/allocations/{allocation}/corrections (501, implemented in M3)
+**Response `201`** or **`200` with `Idempotent-Replayed: true`**:
 
-Amend or void an allocation. Role: `supervisor`. Until M3 the endpoint changes nothing and writes no rows.
+```json
+{"correction":{"id":3,"seq":15,"allocation_seq":1,"operator":{"id":1,"name":"Ana"},"kind":"amend",
+   "from":40,"to":20,"reason":"Counted wrong","supervisor":{"id":4,"name":"Dana"},"effective_at":"2026-10-17T14:00:00.000000Z"},
+ "pool":{"version":15,"remaining":20}}
+```
 
-**Response `501`:** same body as above, `milestone` `M3`.
+`from` is the units the entry held right before this correction; `to` is `0` for a void. `pool` is the pool as it stood right after this correction.
 
-**Errors:** `401 unknown_user` · `403 forbidden_role` · `501 not_implemented`.
+**Errors:** `400 missing_idempotency_key` · `401 unknown_user` · `403 forbidden_role` · `404 not_found` (pool, or no allocation with that number in this pool) · `409 idempotency_key_conflict` · `422 validation_failed` (blank reason, bad amount, an amount on a void, or an amount equal to what the entry holds now, which is `details.fields.amount = ["no_change"]`) · `422 allocation_voided` · `422 insufficient_free_units` with `details {"needed":20,"free":0,"allocation_seq":1}` and message "Needs 20 more units, 0 are free. Restock first." · `503 pool_busy`. A refused request records nothing.
 
-### GET /api/pools/{pool}/audit (501, implemented in M3)
+### GET /api/pools/{pool}/audit
 
-The audit view of corrections and restocks. Role: `supervisor`. Until M3 the endpoint changes nothing and writes no rows.
+The audit view. Role: `supervisor`. Reads one consistent view and takes no lock.
 
-**Response `501`:** same body as above, `milestone` `M3`.
+**Response `200`**
 
-**Errors:** `401 unknown_user` · `403 forbidden_role` · `501 not_implemented`.
+```json
+{"version":15,"server_time":"2026-10-17T15:00:00.000000Z",
+ "corrections":[{"seq":15,"allocation_seq":1,"operator":{"id":1,"name":"Ana"},"kind":"amend","from":40,"to":20,
+   "reason":"Counted wrong","supervisor":{"id":4,"name":"Dana"},"at":"2026-10-17T14:00:00.000000Z",
+   "original":{"requested":40,"granted":40},
+   "status":{"before":"high","after":"elevated",
+     "points":[{"label":"when corrected","seq":15,"at":"…","before":"high","after":"elevated"},
+               {"label":"after Ana's request #12","seq":12,"at":"…","before":"high","after":"elevated"}]}}],
+ "hindsight":[{"from":{"seq":3,"at":"…"},"to":{"seq":14,"at":"…"},"lowest":-20,"corrections":[15]}]}
+```
+
+- `corrections` are in commit order, oldest first; only corrected entries appear. `status.before` and `status.after` are the corrected operator's status at the correction moment without and with this correction; `points` lists that moment first, then only the later points where the two differ (after each of the operator's later requests, at each of their expiries, and now). Only the corrected operator's status is ever shown.
+- `hindsight` lists the stretches where the corrected history had the pool below 0 ("overdrawn in hindsight"). `from` is the first entry below 0 and `to` the first later entry back at 0 or above (`null` if it never recovers; `seq` is `null` for an expiry). `lowest` is the lowest remaining inside the window and `corrections` the corrections that raise an entry at or before its end. It never blocks anything and never changes the current remaining.
+- An empty history gives `{"corrections":[],"hindsight":[]}`.
+
+**Errors:** `401 unknown_user` · `403 forbidden_role` · `404 not_found`.
 
 ### Broadcast event: channel `pool.{id}`, name `pool.updated`
 
@@ -166,7 +194,7 @@ A public channel (no authentication; see the README). Sent through Laravel Rever
 
 **Rules**
 
-- Sent only after the transaction commits, and for every stored entry, including a zero grant.
+- Sent only after the transaction commits, and for every stored entry, including a zero grant. Since M3 the `entry` can also be a `restock` or a `correction` entry.
 - Failing to broadcast is logged and never fails the request.
 - Expiry sends nothing (M2 derives it).
 - Clients apply an event only when `version` is the current version + 1, ignore an older or equal one, hold a gap for 500 ms and then fetch one snapshot, and fetch a snapshot on reconnect.
@@ -213,6 +241,27 @@ Everything below only adds to the M1 contract above; no M1 field was renamed or 
 
 **Rules config.** `window_scale` (env `POOL_WINDOW_SCALE`, default `1`) multiplies every window and exists only so a demo can show an expiry in minutes. It must be above 0 and at most 1; a bad value stops startup with the key `window_scale`.
 
+## M3 (additive)
+
+Everything below only adds to the M1 and M2 contract; no field was renamed or removed. The one removal is the `PUT /api/pools/{pool}/capacity` stub that the M3 PRD retired (PQ3): the path is no longer routed and answers `404 not_found`. Capacity is raised only by `POST …/restocks`. The four `501 not_implemented` rows are gone because the endpoints are real.
+
+**Log entries**: new keys
+
+- `correction` entries: `operator` (`{id, name}`, the operator whose allocation was corrected) and `correction_kind` (`amend` or `void`). `change` keeps its shape: `change.from` is the units the entry held right before the correction (stored with the correction), `change.to` is the new units, `null` for a void.
+- `allocation` entries: `corrected_to` (the units the entry holds now when a correction changed them, `0` for a void, otherwise `null`) and `voided` (bool). `requested` and `granted` keep their original values, so the original stays readable. `expires_at` follows the corrected units and is `null` for a voided entry.
+- `expiry` entries are derived from the corrected units: `units` is the corrected amount, a voided entry has none, and a zero-grant Temporary entry that was raised after its window gets one.
+
+```json
+{"seq":20,"cursor":"20","kind":"correction","at":"2026-10-17T11:00:00.000000Z","supervisor":{"id":4,"name":"Dana"},
+ "operator":{"id":1,"name":"Ana"},"allocation_seq":12,"correction_kind":"amend","change":{"from":40,"to":20},"reason":"Counted wrong"}
+```
+
+**Idempotency keys** are unique per table per pool: the same UUID may be used once as an allocation key, once as a restock key and once as a correction key without a conflict. A client uses a new UUID for every user action. A refused correction stores nothing, so sending the same key again is judged afresh (it is refused again while the pool is unchanged, and accepted if a restock arrived in between). A recorded correction or restock is replayed exactly, even after the entry was corrected again or has expired.
+
+**Evaluation instant.** The instant a write is evaluated at is now `max(receipt time, the newest time of any ledger entry)`, where an entry's time is `effective_at` for allocations and corrections and `recorded_at` for restocks. The stored times do not change.
+
+**Broadcast.** `pool.updated` is sent for restocks and corrections as well. A client that receives a `correction` entry fetches one snapshot, because a correction can change an older row, a status, holdings and derived expiry entries at once.
+
 ## Calculation contract
 
 Used by M2 and M3. Written in PHP; all classes live under `App\Pool\Calculation`.
@@ -225,7 +274,7 @@ final class Ledger { // immutable
   public function __construct(public array $restocks, public array $allocations, public array $corrections = []) {}
 }
 // AllocationEntry: id, seq, operatorId, type, units (granted after corrections), tierAtLog, effectiveAt,
-//                  active (false once expired; defaults to true)
+//                  active (false once expired; defaults to true), expiresAt, correctedFrom (units before a correction, or null), voided
 
 final class PoolState { public function __construct(public int $remaining, public int $version, public array $statuses = []) {} }
 
@@ -235,7 +284,9 @@ final class PoolCalculator {
 }
 // remaining = Σ restock.amount − Σ units(type = consumed) − Σ units(type = temporary AND active)
 // version   = the highest seq in the ledger as loaded
-// ApplyCorrections::apply(Ledger): Ledger                                   (M3)
+// ApplyCorrections::apply(Ledger): Ledger                                   (M3: per allocation the last correction by seq wins;
+//                                                                            amend sets units, void sets units 0 and voided)
+// Ledger::asOf(int $seq): Ledger; instantAt(int $seq): ?CarbonImmutable; evaluationInstant(CarbonImmutable $receipt): CarbonImmutable   (M3)
 // ApplyExpiry::apply(Ledger, CarbonImmutable $now, RulesConfig): Ledger     (M2)
 // ComputeStatus::compute(Ledger, CarbonImmutable $now, RulesConfig): array<int,string>  (M2)
 ```

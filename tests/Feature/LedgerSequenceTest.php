@@ -111,3 +111,45 @@ it('lets nothing but LedgerSequence write pools.version in the application code'
 
     expect($offenders)->toBe([], 'These files write pools.version themselves. Take the number from App\Pool\LedgerSequence::next() instead, so no two ledger entries can share a seq.');
 });
+
+it('numbers restocks, allocations and corrections written through their services as one gapless sequence', function () {
+    $this->seed(DatabaseSeeder::class);
+    $pool = Pool::findOrFail(1);
+    $dana = User::find(4);
+    $ana = User::find(1);
+
+    $restock = postRestock(['pool' => $pool], $dana, ['amount' => 20])->assertCreated();
+    $allocation = submitAllocation($pool, $ana, 5)->assertCreated();
+    $correction = postCorrection(['pool' => $pool], $dana, $allocation->json('allocation.seq'), ['kind' => 'amend', 'amount' => 3, 'reason' => 'typo'])->assertCreated();
+    $second = postRestock(['pool' => $pool], $dana, ['amount' => 1])->assertCreated();
+
+    expect([$restock->json('restock.seq'), $allocation->json('allocation.seq'), $correction->json('correction.seq'), $second->json('restock.seq')])->toBe([2, 3, 4, 5])
+        ->and(ledgerSeqs($pool))->toBe(range(1, 5))
+        ->and($pool->fresh()->version)->toBe(5);
+});
+
+it('never updates or deletes a stored allocation, restock or correction in the application code', function () {
+    $ledgerTables = 'allocations|restocks|corrections';
+    $writes = [
+        // Raw SQL.
+        "/\\b(update|delete\\s+from|truncate(\\s+table)?)\\s+[\"']?({$ledgerTables})\\b/i",
+        // The query builder on the table.
+        "/table\\(\\s*['\"]({$ledgerTables})['\"]\\s*\\)[^;]*->(update|delete|upsert|truncate|increment|decrement)\\s*\\(/s",
+    ];
+    $changesRows = '/(->(update|delete|forceDelete|upsert|truncate|restore)\\s*\\(|::(destroy|truncate)\\s*\\(|->(save|push)\\s*\\(\\s*\\)|->(fill|forceFill)\\s*\\()/';
+    $touchesLedgerModel = '/\\b(Allocation|Restock|Correction)(::|\\b.*\\$)|->(allocations|restocks|corrections)\\s*\\(/';
+
+    $offenders = collect(File::allFiles(app_path()))
+        ->filter(fn ($file) => $file->getExtension() === 'php')
+        ->filter(function ($file) use ($writes, $changesRows, $touchesLedgerModel) {
+            $source = $file->getContents();
+
+            return collect($writes)->contains(fn (string $pattern) => preg_match($pattern, $source) === 1)
+                // Models: a file that works with the ledger models must not also change or delete rows.
+                || (preg_match($touchesLedgerModel, $source) === 1 && preg_match($changesRows, $source) === 1);
+        })
+        ->map(fn ($file) => str_replace(base_path().'/', '', $file->getPathname()))
+        ->values()->all();
+
+    expect($offenders)->toBe([], 'The ledger is append-only (D7, FR6.8): a correction is a new row, never an edit of an old one.');
+});

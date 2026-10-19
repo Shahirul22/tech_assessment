@@ -191,3 +191,133 @@ it('shares one gapless numbering with restocks and allocations', function () {
     expect($seqs)->toBe([5, 6, 7, 8])
         ->and($world['pool']->fresh()->version)->toBe(8);
 });
+
+it('lowers an entry over HTTP and returns the correction and the pool', function () {
+    $world = workedPool();
+
+    $response = postCorrection($world, $world['dana'], 2, ['kind' => 'amend', 'amount' => 20, 'reason' => 'Counted wrong'])
+        ->assertCreated()
+        ->assertJsonPath('pool.remaining', 20)
+        ->assertJsonPath('pool.version', 5)
+        ->assertJsonPath('correction.seq', 5)
+        ->assertJsonPath('correction.allocation_seq', 2)
+        ->assertJsonPath('correction.operator', ['id' => $world['ana']->id, 'name' => 'Ana'])
+        ->assertJsonPath('correction.kind', 'amend')
+        ->assertJsonPath('correction.from', 40)
+        ->assertJsonPath('correction.to', 20)
+        ->assertJsonPath('correction.reason', 'Counted wrong')
+        ->assertJsonPath('correction.supervisor', ['id' => $world['dana']->id, 'name' => 'Dana']);
+
+    expect($response->json('correction.effective_at'))->toBe('2026-10-17T12:00:00.000000Z');
+});
+
+it('refuses a raise beyond the free units over HTTP, records nothing, and accepts it after a restock', function () {
+    $world = workedPool();
+    $body = ['kind' => 'amend', 'amount' => 60, 'reason' => 'Miscounted'];
+
+    postCorrection($world, $world['dana'], 2, $body)
+        ->assertStatus(422)
+        ->assertJsonPath('error.code', 'insufficient_free_units')
+        ->assertJsonPath('error.message', 'Needs 20 more units, 0 are free. Restock first.')
+        ->assertJsonPath('error.details', ['needed' => 20, 'free' => 0, 'allocation_seq' => 2]);
+
+    expect(correctionCount($world))->toBe(0)
+        ->and($world['pool']->fresh()->version)->toBe(4);
+
+    restockUnits($world, 50);
+
+    postCorrection($world, $world['dana'], 2, $body)->assertCreated()->assertJsonPath('pool.remaining', 30);
+});
+
+it('voids an entry over HTTP', function () {
+    $world = workedPool();
+
+    postCorrection($world, $world['dana'], 2, ['kind' => 'void', 'reason' => 'Duplicate'])
+        ->assertCreated()
+        ->assertJsonPath('correction.kind', 'void')
+        ->assertJsonPath('correction.from', 40)
+        ->assertJsonPath('correction.to', 0)
+        ->assertJsonPath('pool.remaining', 40);
+});
+
+it('rejects invalid corrections with 422 validation_failed and records nothing', function (array $body, string $field) {
+    $world = workedPool();
+
+    postCorrection($world, $world['dana'], 2, $body)
+        ->assertStatus(422)
+        ->assertJsonPath('error.code', 'validation_failed')
+        ->assertJsonStructure(['error' => ['details' => ['fields' => [$field]]]]);
+
+    expect(correctionCount($world))->toBe(0);
+})->with([
+    'blank reason' => [['kind' => 'amend', 'amount' => 20, 'reason' => '   '], 'reason'],
+    'missing reason' => [['kind' => 'amend', 'amount' => 20], 'reason'],
+    'reason too long' => [['kind' => 'amend', 'amount' => 20, 'reason' => str_repeat('a', 501)], 'reason'],
+    'amount 0' => [['kind' => 'amend', 'amount' => 0, 'reason' => 'x'], 'amount'],
+    'negative amount' => [['kind' => 'amend', 'amount' => -3, 'reason' => 'x'], 'amount'],
+    'fractional amount' => [['kind' => 'amend', 'amount' => 2.5, 'reason' => 'x'], 'amount'],
+    'text amount' => [['kind' => 'amend', 'amount' => '20', 'reason' => 'x'], 'amount'],
+    'missing amount' => [['kind' => 'amend', 'reason' => 'x'], 'amount'],
+    'amount on a void' => [['kind' => 'void', 'amount' => 5, 'reason' => 'x'], 'amount'],
+    'unknown kind' => [['kind' => 'delete', 'reason' => 'x'], 'kind'],
+    'missing kind' => [['amount' => 5, 'reason' => 'x'], 'kind'],
+    'same amount' => [['kind' => 'amend', 'amount' => 40, 'reason' => 'x'], 'amount'],
+]);
+
+it('reports an unchanged amount as no_change on the amount field', function () {
+    $world = workedPool();
+
+    postCorrection($world, $world['dana'], 2, ['kind' => 'amend', 'amount' => 40, 'reason' => 'x'])
+        ->assertStatus(422)
+        ->assertJsonPath('error.details.fields.amount', ['no_change']);
+});
+
+it('answers 404 for an unknown entry, an entry of another pool or a malformed number', function () {
+    $world = workedPool();
+    $other = workedPool();
+    Allocation::factory()->create(['pool_id' => $other['pool']->id, 'seq' => 5, 'operator_id' => $other['ana']->id, 'idempotency_key' => 'elsewhere']);
+    $body = ['kind' => 'amend', 'amount' => 5, 'reason' => 'x'];
+
+    postCorrection($world, $world['dana'], 99, $body)->assertNotFound();
+    postCorrection($world, $world['dana'], 5, $body)->assertNotFound();
+    postCorrection($world, $world['dana'], 1, $body)->assertNotFound();
+    postCorrection($world, $world['dana'], 'abc', $body)->assertNotFound();
+    postCorrection($world, $world['dana'], 0, $body)->assertNotFound();
+    postCorrection($world, $world['dana'], 2, $body, pool: Pool::factory()->make(['id' => 999999]))->assertNotFound();
+
+    expect(correctionCount($world))->toBe(0);
+});
+
+it('refuses a correction of a voided entry with 422 allocation_voided', function () {
+    $world = workedPool();
+    correct($world, 2, 'void');
+
+    postCorrection($world, $world['dana'], 2, ['kind' => 'amend', 'amount' => 10, 'reason' => 'x'])
+        ->assertStatus(422)
+        ->assertJsonPath('error.code', 'allocation_voided');
+});
+
+it('refuses an operator and an unknown user, and requires an Idempotency-Key', function () {
+    $world = workedPool();
+    $body = ['kind' => 'amend', 'amount' => 20, 'reason' => 'x'];
+
+    postCorrection($world, $world['ana'], 2, $body)->assertForbidden()->assertJsonPath('error.code', 'forbidden_role');
+    postCorrection($world, null, 2, $body)->assertStatus(401);
+    postCorrection($world, $world['dana'], 2, $body, withKey: false)->assertStatus(400)->assertJsonPath('error.code', 'missing_idempotency_key');
+
+    expect(correctionCount($world))->toBe(0);
+});
+
+it('replays a correction over HTTP with 200 and the same body, and refuses another payload with 409', function () {
+    $world = workedPool();
+    $body = ['kind' => 'amend', 'amount' => 20, 'reason' => 'Counted wrong'];
+    $first = postCorrection($world, $world['dana'], 2, $body, 'K')->assertCreated();
+
+    $replay = postCorrection($world, $world['dana'], 2, $body, 'K')->assertOk()->assertHeader('Idempotent-Replayed', 'true');
+
+    expect($replay->json())->toBe($first->json());
+
+    postCorrection($world, $world['dana'], 2, ['amount' => 25] + $body, 'K')->assertStatus(409)->assertJsonPath('error.code', 'idempotency_key_conflict');
+
+    expect(correctionCount($world))->toBe(1);
+});
