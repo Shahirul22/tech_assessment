@@ -2,7 +2,10 @@
 
 use App\Events\PoolUpdated;
 use App\Models\Allocation;
+use App\Pool\AddRestock;
 use App\Pool\AllocationService;
+use App\Pool\Exceptions\CorrectionRefused;
+use App\Pool\RestockService;
 use App\Pool\SubmitAllocation;
 use Illuminate\Broadcasting\Broadcasters\Broadcaster;
 use Illuminate\Support\Defer\DeferredCallbackCollection;
@@ -10,6 +13,7 @@ use Illuminate\Support\Facades\Broadcast;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Exceptions;
+use Illuminate\Validation\ValidationException;
 
 beforeEach(function () {
     // Run deferred callbacks at once, so the test can see what would run after the response.
@@ -41,6 +45,8 @@ it('broadcasts the new version, remaining and entry after a successful submit', 
                 'granted' => 4,
                 'outcome' => 'full',
                 'expires_at' => null,
+                'corrected_to' => null,
+                'voided' => false,
             ];
     });
 });
@@ -139,4 +145,94 @@ it('defers the broadcast until after the response when deferral is on', function
     $deferred->invoke();
 
     Event::assertDispatchedTimes(PoolUpdated::class, 1);
+});
+
+it('broadcasts a restock with its version, the new remaining and a restock entry', function () {
+    freezeClock('2026-10-17 12:00:00 UTC');
+    Event::fake([PoolUpdated::class]);
+    $world = workedPool();
+
+    restockUnits($world, 50);
+
+    Event::assertDispatchedTimes(PoolUpdated::class, 1);
+    Event::assertDispatched(PoolUpdated::class, fn (PoolUpdated $event) => $event->poolId === $world['pool']->id
+        && $event->version === 5
+        && $event->remaining === 50
+        && $event->entry === [
+            'seq' => 5, 'cursor' => '5', 'kind' => 'restock', 'at' => '2026-10-17T12:00:00.000000Z',
+            'actor' => ['id' => $world['dana']->id, 'name' => 'Dana'], 'amount' => 50, 'note' => null,
+        ]);
+});
+
+it('broadcasts a correction with its version, the new remaining and a correction entry', function () {
+    freezeClock('2026-10-17 12:00:00 UTC');
+    Event::fake([PoolUpdated::class]);
+    $world = workedPool();
+
+    correct($world, 2, 'amend', 20, 'Counted wrong');
+
+    Event::assertDispatchedTimes(PoolUpdated::class, 1);
+    Event::assertDispatched(PoolUpdated::class, fn (PoolUpdated $event) => $event->version === 5
+        && $event->remaining === 20
+        && $event->entry === [
+            'seq' => 5, 'cursor' => '5', 'kind' => 'correction', 'at' => '2026-10-17T12:00:00.000000Z',
+            'supervisor' => ['id' => $world['dana']->id, 'name' => 'Dana'],
+            'operator' => ['id' => $world['ana']->id, 'name' => 'Ana'],
+            'allocation_seq' => 2, 'correction_kind' => 'amend', 'change' => ['from' => 40, 'to' => 20], 'reason' => 'Counted wrong',
+        ]);
+});
+
+it('does not broadcast a replayed or refused restock or correction', function () {
+    freezeClock('2026-10-17 12:00:00 UTC');
+    $world = workedPool();
+    $service = app(RestockService::class);
+    $service->add($world['pool'], $world['dana'], new AddRestock(5, null, 'r-1'));
+    correct($world, 2, 'amend', 39, key: 'c-1');
+
+    Event::fake([PoolUpdated::class]);
+
+    $service->add($world['pool'], $world['dana'], new AddRestock(5, null, 'r-1'));
+    correct($world, 2, 'amend', 39, key: 'c-1');
+    expect(fn () => correct($world, 3, 'amend', 500))->toThrow(CorrectionRefused::class);
+    expect(fn () => correct($world, 3, 'amend', 50))->toThrow(ValidationException::class);
+
+    Event::assertNotDispatched(PoolUpdated::class);
+});
+
+it('broadcasts a restock and a correction only after the transaction has closed', function () {
+    freezeClock('2026-10-17 12:00:00 UTC');
+    $world = workedPool();
+    $levels = [];
+    $baseline = DB::transactionLevel();
+    Event::listen(PoolUpdated::class, function () use (&$levels) {
+        $levels[] = DB::transactionLevel();
+    });
+
+    restockUnits($world, 5);
+    correct($world, 2, 'amend', 30);
+
+    expect($levels)->toBe([$baseline, $baseline]);
+});
+
+it('still stores a restock and a correction when the broadcaster throws, and reports it', function () {
+    Exceptions::fake();
+    Broadcast::extend('throwing', fn () => new class extends Broadcaster
+    {
+        public function auth($request) {}
+
+        public function validAuthenticationResponse($request, $result) {}
+
+        public function broadcast(array $channels, $event, array $payload = [])
+        {
+            throw new RuntimeException('reverb is down');
+        }
+    });
+    config(['broadcasting.default' => 'throwing', 'broadcasting.connections.throwing' => ['driver' => 'throwing']]);
+    freezeClock('2026-10-17 12:00:00 UTC');
+    $world = workedPool();
+
+    expect(restockUnits($world, 5)->pool->remaining)->toBe(5)
+        ->and(correct($world, 2, 'amend', 30)->pool->remaining)->toBe(15);
+
+    Exceptions::assertReported(fn (RuntimeException $e) => $e->getMessage() === 'reverb is down');
 });

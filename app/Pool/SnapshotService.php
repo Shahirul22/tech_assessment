@@ -41,7 +41,7 @@ class SnapshotService
             $now = $this->clock->now();
             $state = $this->calculator->calculateAt($this->ledgers->load($current), $now);
             $nextDue = $state->effective === null ? null : $this->expiries->nextDue($state->effective);
-            [$entries, $hasMore] = $this->log->latest($current, $limit, $now);
+            [$entries, $hasMore] = $this->log->latest($current, $limit, $now, null, $state->effective);
 
             return [
                 'pool' => ['id' => $current->id, 'name' => $current->name],
@@ -64,7 +64,9 @@ class SnapshotService
     public function logPage(Pool $pool, int $limit, ?string $before): array
     {
         return $this->readConsistently(function () use ($pool, $limit, $before) {
-            [$entries, $hasMore] = $this->log->latest($pool, $limit, $this->clock->now(), $before);
+            $now = $this->clock->now();
+            $state = $this->calculator->calculateAt($this->ledgers->load($pool), $now);
+            [$entries, $hasMore] = $this->log->latest($pool, $limit, $now, $before, $state->effective);
 
             return ['entries' => $this->rendered($entries), 'has_more' => $hasMore];
         });

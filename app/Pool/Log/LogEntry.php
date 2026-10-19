@@ -28,9 +28,11 @@ final readonly class LogEntry
     /**
      * The operator relation must be loaded.
      *
-     * @param  CarbonImmutable|null  $expiresAt  When a temporary grant's units return; null for consumed or zero grants.
+     * @param  CarbonImmutable|null  $expiresAt  When a temporary grant's units return; null for consumed, zero or voided grants.
+     * @param  int|null  $correctedTo  The units the entry holds now when a correction changed them; null when untouched.
+     * @param  bool  $voided  True when the entry was voided. The original request and grant stay as logged (FR8).
      */
-    public static function fromAllocation(Allocation $allocation, ?CarbonImmutable $expiresAt = null): self
+    public static function fromAllocation(Allocation $allocation, ?CarbonImmutable $expiresAt = null, ?int $correctedTo = null, bool $voided = false): self
     {
         return new self($allocation->seq, 'allocation', $allocation->effective_at, [
             'operator' => ['id' => $allocation->operator->id, 'name' => $allocation->operator->name],
@@ -38,6 +40,8 @@ final readonly class LogEntry
             'requested' => $allocation->requested,
             'granted' => $allocation->granted,
             'expires_at' => $expiresAt,
+            'corrected_to' => $correctedTo,
+            'voided' => $voided,
         ]);
     }
 
@@ -54,14 +58,17 @@ final readonly class LogEntry
     }
 
     /**
-     * The supervisor and allocation relations must be loaded. M1 stores no corrections; this serves M3 and fixtures.
+     * The supervisor and allocation.operator relations must be loaded. `from` is the units the entry held right before
+     * this correction (the stored from_amount); `to` is null for a void.
      */
     public static function fromCorrection(Correction $correction): self
     {
         return new self($correction->seq, 'correction', $correction->effective_at, [
             'supervisor' => ['id' => $correction->supervisor->id, 'name' => $correction->supervisor->name],
+            'operator' => ['id' => $correction->allocation->operator->id, 'name' => $correction->allocation->operator->name],
             'allocation_seq' => $correction->allocation->seq,
-            'from' => $correction->allocation->granted,
+            'correction_kind' => $correction->kind,
+            'from' => $correction->from_amount,
             'to' => $correction->new_amount,
             'reason' => $correction->reason,
         ]);

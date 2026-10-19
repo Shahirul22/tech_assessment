@@ -128,7 +128,7 @@
 
 ## Phase 2 — Writers (US1, US2, US3, US4, US5, US7)
 
-### [ ] T010 Implement `RestockService`
+### [x] T010 Implement `RestockService`
 - **Refs:** FR10, FR10.1, FR6.11, NFR5, DD6, AC-US1.1, AC-US1.2, AC-US1.5
 - **Depends on:** T002, T004, T005
 - **Files:** `app/Pool/AddRestock.php` (create), `app/Pool/RestockResult.php` (create), `app/Pool/RestockService.php` (create), `tests/Feature/RestockTest.php` (create)
@@ -136,8 +136,9 @@
 - **Verify:** `APP php artisan test --compact tests/Feature/RestockTest.php` → pass.
 - **Done when:** AC-US1.1 (server half), AC-US1.2 and AC-US1.5 hold at service level.
 - **Out of scope:** the HTTP layer (T016), the broadcast (T015), validation of the amount (T016).
+- Note: Boost queries: search-docs `database transactions pessimistic locking lockForUpdate` (T005 session) and `eloquent factories`. Shared test fixtures added to tests/Pest.php: `workedPool()` (the PRD §7 pool) and later the expiry and correction helpers.
 
-### [ ] T011 Implement `CorrectionService` with the §4 scenarios
+### [x] T011 Implement `CorrectionService` with the §4 scenarios
 - **Refs:** FR6, FR6.1–FR6.8, FR6.10–FR6.12, FR7, NFR1, DD4, DD5, DD6, AC-US2.1–AC-US2.4, AC-US3.1–AC-US3.3, AC-US3.5, AC-US4.1, AC-US10.1
 - **Depends on:** T006, T007, T010
 - **Files:** `app/Pool/ApplyCorrection.php` (create), `app/Pool/CorrectionResult.php` (create), `app/Pool/CorrectionService.php` (create), `app/Pool/Exceptions/CorrectionRefused.php` (create), `app/Pool/Exceptions/AllocationVoided.php` (create), `tests/Feature/CorrectionTest.php` (create), `tests/Unit/CalculatorPendingTest.php` (delete the file: its last todo is converted here)
@@ -145,8 +146,9 @@
 - **Verify:** `APP php artisan test --compact tests/Feature/CorrectionTest.php` → pass; `APP php artisan test --compact` → whole suite green and no pending test left in `tests/Unit`.
 - **Done when:** every §4 scenario passes at service level (D7, D11), and AC-US10.1 holds: no pending M3 test remains.
 - **Out of scope:** HTTP, validation of raw input (T017), expiry and replay deep cases (T012, T013), broadcast (T015).
+- Note: Boost query: search-docs `database transactions pessimistic locking lockForUpdate`; database-schema `corrections`. `CalculatorPendingTest.php` removed (approved, plan §11); its last todo is now 'refuses a correction that raises an allocation beyond the free units' in CorrectionTest. No-op correction renders as `details.fields.amount = ["no_change"]` (a list, like every other 422 field). `allocation.operator` is loaded outside the lock.
 
-### [ ] T012 Test corrections around expiry
+### [x] T012 Test corrections around expiry
 - **Refs:** FR6.5, FR6.6, D4, D7, AC-US4.2, AC-US5.1–AC-US5.4
 - **Depends on:** T011
 - **Files:** `tests/Feature/CorrectionExpiryTest.php` (create), `app/Pool/CorrectionService.php` (edit only to fix a failing case)
@@ -154,8 +156,9 @@
 - **Verify:** `APP php artisan test --compact tests/Feature/CorrectionExpiryTest.php` → pass.
 - **Done when:** AC-US4.2 and AC-US5.1–AC-US5.4 pass, including the ±1 ms boundary.
 - **Out of scope:** the log's derived expiry entries (T014).
+- Note: Boost query: search-docs `database transactions pessimistic locking lockForUpdate` (no new Laravel API). All six cases pass including the ±1 ms boundary; shared helpers (expiryWorld etc.) live in tests/Pest.php.
 
-### [ ] T013 Test idempotent replay of restocks and corrections
+### [x] T013 Test idempotent replay of restocks and corrections
 - **Refs:** FR6.11, NFR5, AC-US7.4, AC-US1.5
 - **Depends on:** T011
 - **Files:** `tests/Feature/CorrectionIdempotencyTest.php` (create), `app/Pool/CorrectionService.php` / `app/Pool/RestockService.php` (edit only to fix a failing case)
@@ -163,8 +166,9 @@
 - **Verify:** `APP php artisan test --compact tests/Feature/CorrectionIdempotencyTest.php` → pass.
 - **Done when:** AC-US7.4 passes.
 - **Out of scope:** the HTTP headers (T016, T017).
+- Note: Boost query: same as T011. All cases pass first time, including replay after the clock moved 26 h.
 
-### [ ] T014 Show corrections and corrected units in the log and snapshot
+### [x] T014 Show corrections and corrected units in the log and snapshot
 - **Refs:** FR3.4, FR8, DD12, A-M3.4, AC-US2.1, AC-US4.1, AC-US10.3
 - **Depends on:** T011
 - **Files:** `app/Pool/Log/LogEntry.php` (edit), `app/Pool/Log/LogQuery.php` (edit), `app/Http/Resources/LogEntryResource.php` (edit), `app/Pool/SnapshotService.php` (edit), `tests/Feature/CorrectionLogTest.php` (create), `tests/Feature/LogAndSnapshotTest.php`, `tests/Feature/LogEntryResourceTest.php`, `tests/Feature/BroadcastTest.php` (edit only the assertions on entry shapes)
@@ -172,8 +176,9 @@
 - **Verify:** `APP php artisan test --compact tests/Feature/CorrectionLogTest.php tests/Feature/LogAndSnapshotTest.php tests/Feature/LogEntryResourceTest.php tests/Feature/ExpiryLogTest.php tests/Feature/BroadcastTest.php` → pass.
 - **Done when:** the log shows originals, corrections and corrected derived entries; contracts only grew (AC-US10.3).
 - **Out of scope:** announcing restocks and corrections (T015), the audit view.
+- Note: Boost query: search-docs `eloquent factories` not needed; Eloquent eager loading only. Deviation from plan §6, logged in plan §12 at T032: the M1 correction log entry already has `change: {from, to}` (to = null for a void, asserted by an M1 test), so the plan's `change: "amend"|"void"` would break AC-US10.3. `change` is unchanged (its `from` now comes from the stored from_amount); the kind is added as `correction_kind` and the corrected operator as `operator`. Existing shape assertions in LogEntryResourceTest and BroadcastTest were extended additively (corrected_to, voided, operator, correction_kind). `LogQuery::latest` takes the effective ledger as a required last argument; its constructor now takes `Expiries` instead of `RulesConfig`.
 
-### [ ] T015 Announce restocks and corrections after commit
+### [x] T015 Announce restocks and corrections after commit
 - **Refs:** FR17, NFR6, D12, AC-US8.1, AC-US8.3
 - **Depends on:** T010, T011, T014
 - **Files:** `app/Pool/RestockService.php` (edit), `app/Pool/CorrectionService.php` (edit), `tests/Feature/BroadcastTest.php` (edit)
@@ -181,6 +186,7 @@
 - **Verify:** `APP php artisan test --compact tests/Feature/BroadcastTest.php tests/Feature/RestockTest.php tests/Feature/CorrectionTest.php` → pass.
 - **Done when:** AC-US8.1 and AC-US8.3 (server half) hold.
 - **Out of scope:** the browser (T026).
+- Note: Boost queries: search-docs `broadcasting events after commit` (T005 session). Replays, refusals and validation errors announce nothing; a throwing broadcaster is reported and does not fail the write.
 
 **Checkpoint 2:** at service level, restock, lower, raise (refused, then accepted after a restock), void and the expired/active Temporary cases pass; the log and snapshot show originals, corrections and corrected expiry entries; `pool.updated` goes out for restocks and corrections. `APP php artisan test --compact` is green.
 

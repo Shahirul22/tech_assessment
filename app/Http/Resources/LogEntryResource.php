@@ -39,6 +39,8 @@ class LogEntryResource extends JsonResource
                 'granted' => $p['granted'],
                 'outcome' => AllocationOutcome::fromGrant($p['requested'], $p['granted'])->value,
                 'expires_at' => $p['expires_at'] === null ? null : ApiTime::format($p['expires_at']),
+                'corrected_to' => $p['corrected_to'],
+                'voided' => $p['voided'],
             ],
             'restock' => [
                 'actor' => $p['actor'],
@@ -47,7 +49,9 @@ class LogEntryResource extends JsonResource
             ],
             'correction' => [
                 'supervisor' => $p['supervisor'],
+                'operator' => $p['operator'],
                 'allocation_seq' => $p['allocation_seq'],
+                'correction_kind' => $p['correction_kind'],
                 'change' => ['from' => $p['from'], 'to' => $p['to']],
                 'reason' => $p['reason'],
             ],

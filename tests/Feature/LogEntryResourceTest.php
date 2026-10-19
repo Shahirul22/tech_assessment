@@ -38,7 +38,7 @@ it('renders an allocation with its outcome', function (int $requested, int $gran
         'requested' => $requested,
         'granted' => $granted,
         'outcome' => $outcome,
-        'expires_at' => null,
+        'expires_at' => null, 'corrected_to' => null, 'voided' => false,
     ]);
 })->with([
     'full' => [3, 3, 'full'],
@@ -71,11 +71,12 @@ it('renders a correction as a change from one amount to another, or to nothing f
     $amend = Correction::create($row + ['seq' => 20, 'kind' => 'amend', 'from_amount' => 3, 'new_amount' => 2, 'reason' => 'miscounted', 'idempotency_key' => 'a']);
     $void = Correction::create($row + ['seq' => 21, 'kind' => 'void', 'from_amount' => 3, 'new_amount' => null, 'reason' => 'duplicate', 'idempotency_key' => 'b']);
 
-    expect(rendered(LogEntry::fromCorrection($amend->load(['supervisor', 'allocation']))))->toBe([
+    expect(rendered(LogEntry::fromCorrection($amend->load(['supervisor', 'allocation.operator']))))->toBe([
         'seq' => 20, 'cursor' => '20', 'kind' => 'correction', 'at' => '2026-10-17T11:00:00.000000Z',
-        'supervisor' => ['id' => $dana->id, 'name' => 'Dana'], 'allocation_seq' => 12,
+        'supervisor' => ['id' => $dana->id, 'name' => 'Dana'], 'operator' => ['id' => $allocation->operator_id, 'name' => $allocation->operator->name],
+        'allocation_seq' => 12, 'correction_kind' => 'amend',
         'change' => ['from' => 3, 'to' => 2], 'reason' => 'miscounted',
-    ])->and(rendered(LogEntry::fromCorrection($void->load(['supervisor', 'allocation'])))['change'])->toBe(['from' => 3, 'to' => null]);
+    ])->and(rendered(LogEntry::fromCorrection($void->load(['supervisor', 'allocation.operator'])))['change'])->toBe(['from' => 3, 'to' => null]);
 });
 
 it('renders a derived expiry with no seq, its operator and a cursor made of its anchor', function () {
