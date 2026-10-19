@@ -1,0 +1,37 @@
+# Development overrides, merged automatically (the one-command start is unchanged).
+# Bind-mount the repo so host edits, `php artisan test` and files written by Laravel Boost see each other.
+# The named volumes keep the dependencies and assets built into the image visible under the bind mount.
+services:
+  migrate:
+    volumes:
+      - .:/var/www/html
+      - vendor:/var/www/html/vendor
+      - public-build:/var/www/html/public/build
+  app:
+    # storage/ and bootstrap/cache/ are on the host through the bind mount, and a fresh git checkout does not keep them
+    # writable for php-fpm's www-data user (compiled views and sessions would fail with a 500), so they are opened up here.
+    # Laravel looks for a .env file and reports it missing in every test run of a fresh checkout (it is gitignored, and the
+    # containers get their settings from .env.docker), so one is made from .env.docker when absent.
+    # The public-build volume is only filled from the image the first time, so after a rebuild it would still hold the
+    # old assets and their old Vite manifest (the page would link files nginx no longer has). Refresh it from the
+    # pristine copy in the image on every start, including `docker compose run app ...`.
+    entrypoint:
+      - /bin/sh
+      - -c
+      - 'rm -rf public/build/* && cp -R /opt/public-build/. public/build/ && { chmod -R a+rwX public/build storage bootstrap/cache 2>/dev/null || true; } && { [ -e .env ] || cp .env.docker .env 2>/dev/null && chmod a+rw .env 2>/dev/null || true; } && exec docker-php-entrypoint "$@"'
+      - --
+    # Overriding the entrypoint also clears the image's default command, so it is restated here.
+    command: ["php-fpm"]
+    volumes:
+      - .:/var/www/html
+      - vendor:/var/www/html/vendor
+      - public-build:/var/www/html/public/build
+  reverb:
+    volumes:
+      - .:/var/www/html
+      - vendor:/var/www/html/vendor
+      - public-build:/var/www/html/public/build
+
+volumes:
+  vendor:
+  public-build:

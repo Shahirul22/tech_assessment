@@ -1,0 +1,86 @@
+# One command: docker compose up -d --build --wait
+x-php: &php
+  build:
+    context: .
+    dockerfile: docker/php/Dockerfile
+  image: fo-app
+  env_file: .env.docker
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: app
+      POSTGRES_USER: app
+      POSTGRES_PASSWORD: secret
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      # Runs only when the data volume is first created.
+      - ./docker/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U app -d app"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  migrate:
+    <<: *php
+    command: php artisan migrate --force --seed
+    restart: "no"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  app:
+    <<: *php
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z 127.0.0.1 9000"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  nginx:
+    build:
+      context: .
+      dockerfile: docker/php/Dockerfile
+      target: web
+    image: fo-web
+    ports:
+      - "8080:80"
+    depends_on:
+      app:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1/up"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  reverb:
+    <<: *php
+    command: php artisan reverb:start --host=0.0.0.0 --port=8081
+    ports:
+      - "8081:8081"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z 127.0.0.1 8081"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  node:
+    image: node:22-alpine
+    working_dir: /app
+    # REVERB_* here are the in-network addresses, which is what tests/Live/live-latency.mjs needs.
+    env_file: .env.docker
+    volumes:
+      - .:/app
+    profiles: ["tools"]
+
+volumes:
+  pgdata:

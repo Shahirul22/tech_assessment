@@ -1,0 +1,10 @@
+# DEMO SWITCH, not for real use: shrinks every temporary-allocation window so an expiry can be watched in minutes.
+# 0.0013889 of a window: Bronze 24 h -> 2 min, Silver 48 h -> 4 min, Gold 72 h -> 6 min (config/pool_rules.php, FR14).
+# Start it with `bash scripts/demo-expiry.sh`; go back with `docker compose up -d --wait`.
+services:
+  migrate:
+    environment:
+      POOL_WINDOW_SCALE: "0.0013889"
+  app:
+    environment:
+      POOL_WINDOW_SCALE: "0.0013889"
