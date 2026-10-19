@@ -380,3 +380,126 @@ test('compares an event\'s expiry with the epoch clock, not the gap clock', () =
     // The gap clock reads 5 s since page load; the epoch clock is the real time.
     assert.equal(nextExpiryAt(applyEvent(state, withExpiry, 5000, NOW).state), Date.parse('2026-10-19T10:30:00Z'));
 });
+
+// ---- M3: restock and correction events ----
+
+import { applyOwnCorrection, applyOwnRestock, entryFromCorrection, entryFromRestock } from '../pool-state.js';
+
+const restockEvent = (version, remaining) => ({
+    version, remaining, entry: { seq: version, cursor: String(version), kind: 'restock', actor: { id: 4, name: 'Dana' }, amount: 50, note: 'Delivery' },
+});
+const correctionEvent = (version, remaining = 20) => ({
+    version, remaining, entry: { seq: version, cursor: String(version), kind: 'correction', supervisor: { id: 4, name: 'Dana' }, operator: { id: 1, name: 'Ana' }, allocation_seq: 8, correction_kind: 'amend', change: { from: 3, to: 2 }, reason: 'x' },
+});
+
+test('a restock event raises remaining once, like any entry', () => {
+    const first = applyEvent(start(), restockEvent(11, 140), 0);
+
+    assert.equal(first.state.remaining, 140);
+    assert.equal(first.state.version, 11);
+    assert.deepEqual(seqs(first.state), [11, 10, 9, 8]);
+    assert.equal(first.effect, null);
+
+    const again = applyEvent(first.state, restockEvent(11, 140), 0);
+
+    assert.equal(again.state.remaining, 140);
+    assert.deepEqual(seqs(again.state), [11, 10, 9, 8]);
+});
+
+test('a correction event bumps the version, asks for one snapshot and does not change remaining by itself', () => {
+    const { state, effect } = applyEvent(start(), correctionEvent(11), 0);
+
+    assert.equal(effect, 'snapshot');
+    assert.equal(state.version, 11);
+    assert.equal(state.remaining, 90);
+    assert.deepEqual(seqs(state), [10, 9, 8]);
+    assert.equal(state.snapshotPending, true);
+});
+
+test('a second correction while the snapshot is on its way asks for nothing more', () => {
+    const first = applyEvent(start(), correctionEvent(11), 0);
+    const second = applyEvent(first.state, correctionEvent(12), 1);
+
+    assert.equal(second.state.version, 12);
+    assert.equal(second.effect, null);
+});
+
+test('a duplicate or older correction event is ignored', () => {
+    const first = applyEvent(start(), correctionEvent(11), 0);
+
+    for (const version of [11, 9]) {
+        const { state, effect } = applyEvent(first.state, correctionEvent(version), 5);
+
+        assert.equal(state.version, 11);
+        assert.equal(effect, null);
+    }
+});
+
+test('a correction that arrives ahead of its turn waits for the missing update, then asks for the snapshot', () => {
+    const held = applyEvent(start(), correctionEvent(12), 0);
+
+    assert.equal(held.effect, 'wait');
+    assert.equal(held.state.version, 10);
+
+    const filled = applyEvent(held.state, event(11, 87), 1);
+
+    assert.equal(filled.state.version, 12);
+    assert.equal(filled.state.remaining, 87);
+    assert.equal(filled.effect, 'snapshot');
+});
+
+test('the snapshot after a correction brings the corrected rows and drops rows the server no longer has', () => {
+    const withExpiry = initialState({
+        version: 10, remaining: 90, log_has_more: false,
+        log: [entry(10), { seq: null, cursor: '9x8', kind: 'expiry', operator: { id: 1, name: 'Ana' }, allocation_seq: 8, units: 3 }, entry(9), entry(8)],
+    });
+    const asked = applyEvent(withExpiry, correctionEvent(11), 0);
+    const corrected = { version: 11, remaining: 93, log_has_more: false, log: [{ ...entry(11), kind: 'correction' }, entry(10), entry(9), entry(8, { corrected_to: 0, voided: true })] };
+
+    const { state, effect } = applySnapshot(asked.state, corrected, 1);
+
+    assert.equal(effect, null);
+    assert.equal(state.remaining, 93);
+    assert.equal(state.snapshotPending, false);
+    assert.equal(state.snapshotWanted, false);
+    // The expiry entry of the voided allocation is gone, and the allocation row shows the correction.
+    assert.deepEqual(state.log.map((e) => e.cursor), ['11', '10', '9', '8']);
+    assert.equal(state.log.find((e) => e.seq === 8).voided, true);
+});
+
+test('the snapshot after a correction keeps older pages the operator loaded', () => {
+    const older = applyOlderPage(start(), { entries: [entry(7), entry(6)], has_more: true });
+    const asked = applyEvent(older.log ? older : older, correctionEvent(11), 0);
+
+    const { state } = applySnapshot(asked.state, { version: 11, remaining: 93, log_has_more: true, log: [entry(11), entry(10), entry(9)] }, 1);
+
+    assert.deepEqual(seqs(state), [11, 10, 9, 8, 7, 6]);
+});
+
+test('the own result of a restock applies like its broadcast, and the broadcast copy is a duplicate', () => {
+    const result = { restock: { id: 5, seq: 11, actor: { id: 4, name: 'Dana' }, amount: 50, note: 'Delivery', recorded_at: '2026-10-17T13:00:00.000000Z' }, pool: { version: 11, remaining: 140 } };
+
+    const own = applyOwnRestock(start(), result, 0);
+
+    assert.equal(own.state.remaining, 140);
+    assert.deepEqual(own.state.log[0], entryFromRestock(result.restock));
+    assert.equal(own.state.log[0].kind, 'restock');
+
+    const broadcast = applyEvent(own.state, restockEvent(11, 140), 1);
+
+    assert.deepEqual(seqs(broadcast.state), [11, 10, 9, 8]);
+});
+
+test('the own result of a correction bumps the version and asks for one snapshot', () => {
+    const result = {
+        correction: { id: 3, seq: 11, allocation_seq: 8, operator: { id: 1, name: 'Ana' }, kind: 'void', from: 3, to: 0, reason: 'dup', supervisor: { id: 4, name: 'Dana' }, effective_at: '2026-10-17T14:00:00.000000Z' },
+        pool: { version: 11, remaining: 93 },
+    };
+
+    const own = applyOwnCorrection(start(), result, 0);
+
+    assert.equal(own.effect, 'snapshot');
+    assert.equal(own.state.version, 11);
+    assert.deepEqual(entryFromCorrection(result.correction).change, { from: 3, to: null });
+    assert.equal(entryFromCorrection(result.correction).correction_kind, 'void');
+});

@@ -270,7 +270,7 @@
 
 ## Phase 4 — Screens (US8, US9)
 
-### [ ] T023 [P] Add `supervisor-rules.js` (form problems)
+### [x] T023 [P] Add `supervisor-rules.js` (form problems)
 - **Refs:** FR18.1, AC-US1.3, AC-US2.4, plan §6 "Client modules"
 - **Depends on:** T001
 - **Files:** `resources/js/supervisor-rules.js` (create), `resources/js/__tests__/supervisor-rules.test.js` (create)
@@ -278,8 +278,9 @@
 - **Verify:** `NODE npm test` → the new test file passes with every case above.
 - **Done when:** the form rules match the server's validation (T017).
 - **Out of scope:** the DOM, the network.
+- Note: Pure JavaScript task: no Boost query. The amount is judged before the reason when both are wrong. 'No change' and 'Use Void to remove all units' match the server's no_change and its refusal of 0.
 
-### [ ] T024 [P] Add `audit-view.js` (text builders)
+### [x] T024 [P] Add `audit-view.js` (text builders)
 - **Refs:** FR15, FR16, AC-US3.4, AC-US6.3
 - **Depends on:** T001
 - **Files:** `resources/js/audit-view.js` (create), `resources/js/__tests__/audit-view.test.js` (create)
@@ -287,8 +288,9 @@
 - **Verify:** `NODE npm test` → the new test file passes (fixed time zone; amend, void, no points, hindsight, empty).
 - **Done when:** AC-US6.3 and the hindsight text are testable without a browser.
 - **Out of scope:** the DOM.
+- Note: Pure JavaScript task: no Boost query. Also exports `auditView()` (rows + hindsight lines + empty state) and `EMPTY_AUDIT_TEXT`. A status that did not change reads 'Ana: elevated (unchanged)'. Times use returnTimeText ('15:00 today'); the hindsight text uses plain clock times and names the days only across midnight.
 
-### [ ] T025 Render corrections, restocks and the corrected/voided marker
+### [x] T025 Render corrections, restocks and the corrected/voided marker
 - **Refs:** FR3.4, AC-US2.1, AC-US4.1
 - **Depends on:** T014
 - **Files:** `resources/js/log-renderer.js` (edit), `resources/js/__tests__/log-renderer.test.js` (edit)
@@ -296,8 +298,9 @@
 - **Verify:** `NODE npm test` → pass, including: correction amend, void, own highlight for Ana only, restock with and without note, corrected and voided allocation rows, M1/M2 cases unchanged.
 - **Done when:** FR3.4 text labels are tested.
 - **Out of scope:** supervisor forms.
+- Note: Pure JavaScript task: no Boost query. M1 text assertions in log-renderer.test.js for restock and correction changed to the new wording required by the PRD (AC-US2.1: 'Dana changed Ana's request #12: 40 → 20 · Counted wrong'); the seed restock (no actor) reads '+100 units · Initial stock'. Logged for plan §12.
 
-### [ ] T026 Handle correction events and add supervisor API calls
+### [x] T026 Handle correction events and add supervisor API calls
 - **Refs:** FR17, NFR6, DD9, D12, AC-US8.1, AC-US8.2
 - **Depends on:** T015, T017, T018
 - **Files:** `resources/js/pool-state.js` (edit), `resources/js/api.js` (edit), `resources/js/__tests__/pool-state.test.js` (edit), `resources/js/__tests__/submit-flow.test.js` (edit only if a shared helper changes)
@@ -305,8 +308,9 @@
 - **Verify:** `NODE npm test` → pass, including: restock event raises remaining once; correction event requests a snapshot and does not change remaining by itself; stale and duplicate events ignored; the new api calls send the right method, path, headers and body and surface `422` details and the offline message.
 - **Done when:** AC-US8.2 holds in the unit tests and the other M1/M2 JS tests pass unchanged.
 - **Out of scope:** the DOM and the Alpine component.
+- Note: Pure JavaScript task: no Boost query. pool-state.js: a `correction` event only bumps the version (and sets `snapshotWanted`), asks for one snapshot and keeps remaining and rows; the snapshot that follows replaces the rows it covers, so the expiry entry of a voided entry disappears while older pages stay. Added applyOwnRestock/applyOwnCorrection. api.js: postRestock, postCorrection (resolve with {status, body, key}, or {offline}, reject on no answer) and fetchAudit. The new api tests are in supervisor-api.test.js, because submit-flow.test.js mocks setTimeout for every test.
 
-### [ ] T027 Build the supervisor panel markup and styles
+### [x] T027 Build the supervisor panel markup and styles
 - **Refs:** FR18, NFR3, DD13, AC-US9.1, AC-US9.2
 - **Depends on:** T019
 - **Files:** `resources/views/dashboard.blade.php` (edit), `resources/css/app.css` (edit), `tests/Feature/DashboardViewTest.php` (edit)
@@ -314,8 +318,9 @@
 - **Verify:** `APP php artisan test --compact tests/Feature/DashboardViewTest.php` → pass; `NODE npm run build` → succeeds.
 - **Done when:** the panel exists and is gated (AC-US9.1); layout at 360 px and 1280 px is checked in T030.
 - **Out of scope:** behaviour (T028), contrast and touch-size audit (M4).
+- Note: Boost queries: search-docs `blade directives` and `blade components` (no component needed); markup follows the existing dashboard.blade.php pattern (x-show/x-cloak gating). Plain-language: the supervisor panel exists for all page loads but is hidden unless a supervisor opens that tab, like the old placeholder. DashboardViewTest: the placeholder test is replaced; the M1 test that required exactly one form and no restock or correction controls now checks the request form and that no 'capacity' control exists (it could not stay, the supervisor forms are the point of this task). Layout at 360/1280 px is checked in T030.
 
-### [ ] T028 Wire the supervisor component
+### [x] T028 Wire the supervisor component
 - **Refs:** FR18, FR18.1, FR10, AC-US9.3, AC-US9.4, AC-US2.6, AC-US8.1
 - **Depends on:** T023, T024, T025, T026, T027
 - **Files:** `resources/js/supervisor.js` (create), `resources/js/dashboard.js` (edit)
@@ -323,6 +328,7 @@
 - **Verify:** `NODE npm test` → all pass; `NODE npm run build` → succeeds; manual smoke (in T030) as Dana: restock, a refused raise, a lowering, the audit rows.
 - **Done when:** AC-US9.3 and AC-US9.4 behaviour is in place (offline: no guess, nothing queued), verified manually in T030.
 - **Out of scope:** the sunlight and one-thumb UX (M4).
+- Note: Pure JavaScript task: no Boost query. supervisor.js has createSupervisorFlow (tested in supervisor-flow.test.js: pending before the request, invalid, offline sends nothing, lost answer → Retry with the same key, 422 refusal text from details, void without amount) and supervisorPart(), merged into poolDashboard() with Object.defineProperties so getters stay getters. Smoke-checked in node that the merged component's getters and methods work. Browser checks are in T030.
 
 **Checkpoint 4:** in two browsers on the stack, Dana (supervisor) restocks and corrects and Ana's and Ben's screens update within 2 s; a refused raise shows the text; the audit shows before and after.
 

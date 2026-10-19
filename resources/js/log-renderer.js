@@ -21,7 +21,8 @@ export function renderEntry(entry, viewerId) {
             return { label: 'Restock', text: restockText(entry), own: false };
 
         case 'correction':
-            return { label: 'Correction', text: correctionText(entry), own: false };
+            // The corrected operator's own screen highlights it, like their own allocation.
+            return { label: 'Correction', text: correctionText(entry), own: entry.operator ? isOwn(entry.operator, viewerId) : false };
 
         case 'expiry':
             return {
@@ -39,8 +40,10 @@ function isOwn(operator, viewerId) {
     return viewerId !== null && viewerId !== undefined && String(operator.id) === String(viewerId);
 }
 
-function allocationText({ operator, requested, granted, type }) {
-    const suffix = type === 'temporary' ? ' · temporary' : '';
+function allocationText({ operator, requested, granted, type, corrected_to: correctedTo, voided }) {
+    // The original request and grant always show; a correction is added as words after them (FR8, FR3.4).
+    const suffix = (type === 'temporary' ? ' · temporary' : '')
+        + (voided ? ' · voided' : correctedTo !== null && correctedTo !== undefined ? ` · corrected to ${correctedTo}` : '');
 
     if (granted <= 0) {
         return `${operator.name} requested ${requested}, granted 0${suffix}`;
@@ -53,18 +56,20 @@ function allocationText({ operator, requested, granted, type }) {
     return `${operator.name}: ${granted} of ${requested} granted${suffix}`;
 }
 
-function restockText({ amount, note }) {
-    const base = `+${units(amount)}`;
+function restockText({ actor, amount, note }) {
+    const base = actor ? `${actor.name} added ${units(amount)}` : `+${units(amount)}`;
 
-    return note ? `${base} (${note})` : base;
+    return note ? `${base} · ${note}` : base;
 }
 
-function correctionText({ supervisor, allocation_seq: seq, change, reason }) {
+function correctionText({ supervisor, operator, allocation_seq: seq, change, reason }) {
+    const whose = operator ? `${operator.name}'s request` : 'request';
+
     if (change.to === null) {
-        return `${supervisor.name} voided #${seq} (was ${change.from}): ${reason}`;
+        return `${supervisor.name} voided ${whose} #${seq} (${change.from} → 0) · ${reason}`;
     }
 
-    return `${supervisor.name} changed #${seq} from ${change.from} to ${change.to}: ${reason}`;
+    return `${supervisor.name} changed ${whose} #${seq}: ${change.from} → ${change.to} · ${reason}`;
 }
 
 function units(count) {

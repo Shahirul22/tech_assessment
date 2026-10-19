@@ -122,6 +122,12 @@ select {
     margin-bottom: var(--space-3);
 }
 
+.panel__subtitle {
+    font-size: var(--font-size-base);
+    font-weight: var(--font-weight-strong);
+    margin-bottom: var(--space-3);
+}
+
 /* The number that matters */
 .remaining__label {
     font-size: var(--font-size-large);
@@ -424,4 +430,91 @@ select {
 
 .holdings__row:first-child {
     border-top: 0;
+}
+
+/* Supervisor screen (M3): forms stack on a phone and sit beside the audit on a wide screen. */
+.supervisor {
+    display: grid;
+    gap: var(--space-5);
+    min-width: 0;
+}
+
+.supervisor__form {
+    display: grid;
+    gap: var(--space-3);
+    padding-top: var(--space-4);
+    border-top: 1px solid var(--color-border);
+    max-width: var(--column-form-width);
+    min-width: 0;
+}
+
+.input--wide {
+    width: 100%;
+}
+
+.log__action {
+    margin-inline-start: var(--space-2);
+    padding: 0 var(--space-3);
+    min-height: 2rem;
+}
+
+.supervisor__audit {
+    padding-top: var(--space-4);
+    border-top: 1px solid var(--color-border);
+    min-width: 0;
+}
+
+.audit,
+.audit__hindsight,
+.audit__points {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+}
+
+.audit__row {
+    display: grid;
+    gap: var(--space-1);
+    padding: var(--space-3) 0;
+    border-top: 1px solid var(--color-border);
+    overflow-wrap: anywhere;
+}
+
+.audit__row:first-child {
+    border-top: 0;
+}
+
+.audit__text {
+    font-weight: var(--font-weight-strong);
+}
+
+.audit__points {
+    padding-inline-start: var(--space-4);
+    color: var(--color-text-muted);
+}
+
+/* "Overdrawn in hindsight": a warning in words with a bar, not colour alone */
+.audit__flag {
+    margin-bottom: var(--space-2);
+    padding: var(--space-3) var(--space-4);
+    border: var(--border-width) solid var(--color-warning);
+    border-left-width: 0.5rem;
+    border-radius: var(--radius);
+    background: var(--color-warning-bg);
+    color: var(--color-warning);
+    font-weight: var(--font-weight-strong);
+    overflow-wrap: anywhere;
+}
+
+@media (min-width: 900px) {
+    .supervisor {
+        grid-template-columns: minmax(0, var(--column-form-width)) minmax(0, 1fr);
+        align-items: start;
+    }
+
+    .supervisor > .panel__title,
+    .supervisor > .remaining__label,
+    .supervisor__audit {
+        grid-column: 1 / -1;
+    }
 }

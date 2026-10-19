@@ -43,7 +43,7 @@ it('shows the first pool by id when there are several', function () {
         ->and($snapshot['remaining'])->toBe(7);
 });
 
-it('has a request form with a Consumed and Temporary choice and no restock or correction controls', function () {
+it('has a request form with a Consumed and Temporary choice and a request field the supervisor panel does not reuse', function () {
     $this->seed(DatabaseSeeder::class);
 
     $html = $this->get('/')->assertOk()->getContent();
@@ -56,11 +56,45 @@ it('has a request form with a Consumed and Temporary choice and no restock or co
         ->and($html)->toContain('<span>Consumed</span>')
         ->and($html)->toContain('<span>Temporary</span>')
         ->and($html)->not->toMatch('/<select[^>]*(type|kind)/i')
-        // One form on the page: the request form. Nothing to restock, correct or set capacity.
-        ->and(substr_count($html, '<form'))->toBe(1)
-        ->and(strtolower($html))->not->toContain('name="amount"')
+        ->and($html)->toContain('id="request-form"')
         ->and($html)->toContain('name="requested"')
-        ->and(strtolower($html))->not->toMatch('/<button[^>]*>[^<]*(restock|correct|capacity|void|amend)/');
+        // Nothing sets or lowers capacity: restocks only add.
+        ->and(strtolower($html))->not->toContain('capacity');
+});
+
+it('replaces the supervisor placeholder with the restock form, the correction form and the audit', function () {
+    $this->seed(DatabaseSeeder::class);
+
+    $html = $this->get('/')->assertOk()->getContent();
+
+    expect($html)->not->toContain('Placeholder — arrives in M3')
+        ->and($html)->toContain('id="supervisor-view"')
+        // Three forms in all: request, restock, correct or void.
+        ->and(substr_count($html, '<form'))->toBe(3)
+        ->and($html)->toContain('id="restock-form"')
+        ->and($html)->toContain('name="amount"')
+        ->and($html)->toContain('name="note"')
+        ->and($html)->toContain('id="correction-form"')
+        ->and($html)->toMatch('/<input[^>]*id="correction-amend"[^>]*value="amend"/')
+        ->and($html)->toMatch('/<input[^>]*id="correction-void"[^>]*value="void"/')
+        ->and($html)->toContain('name="reason"')
+        ->and($html)->toContain('id="correction-seq"')
+        ->and($html)->toContain('id="correction-result"')
+        ->and($html)->toContain('id="restock-result"')
+        ->and($html)->toContain('id="audit"')
+        ->and($html)->toContain('id="audit-list"')
+        ->and($html)->toContain('No corrections yet');
+});
+
+it('keeps every supervisor control behind the supervisor gate, and the request form behind the operator gate', function () {
+    $this->seed(DatabaseSeeder::class);
+
+    $html = $this->get('/')->assertOk()->getContent();
+
+    // The supervisor section is hidden unless a supervisor has opened that tab; the Correct button needs a supervisor.
+    expect($html)->toMatch('/<section[^>]*id="supervisor-view"[^>]*x-show="showSupervisor"[^>]*x-cloak/')
+        ->and($html)->toMatch('/<button[^>]*x-show="isSupervisor && row\.correctable"/')
+        ->and($html)->toMatch('/<section[^>]*id="request-panel"[^>]*x-show="isOperator"/');
 });
 
 it('has the status line and the temporary holdings panel with its empty state', function () {
@@ -76,13 +110,13 @@ it('has the status line and the temporary holdings panel with its empty state', 
         ->and($html)->toContain('id="type-hint"');
 });
 
-it('has the user picker and the supervisor placeholder tab', function () {
+it('has the user picker and the supervisor tab', function () {
     $this->seed(DatabaseSeeder::class);
 
     $html = $this->get('/')->assertOk()->getContent();
 
     expect($html)->toContain('id="user-picker"')
-        ->and($html)->toContain('Placeholder — arrives in M3')
+        ->and($html)->toContain('id="tab-supervisor"')
         ->and($html)->toContain('Supervisor')
         ->and($html)->toContain('Pool');
 });

@@ -228,6 +228,90 @@ export function doneText({ requested, granted, expiresAt = null }, serverNowMs, 
 }
 
 /**
+ * POST /api/pools/{pool}/restocks (supervisor). One user action is one call with its own fresh idempotency key; a retry
+ * of the same action passes the same key. Offline it sends nothing and queues nothing.
+ *
+ * Resolves to {status, body, key} for any answer the server gave, including a refusal (the caller reads `body.error`).
+ * Resolves to {offline: true, message} without sending when the device is offline. Rejects when no answer came back
+ * (a lost connection or the timeout): the request may have been stored, so the caller offers a retry with the same key.
+ *
+ * @param {object} options
+ * @param {typeof fetch} options.fetch
+ * @param {number|string} options.userId
+ * @param {number} options.poolId
+ * @param {number} options.amount
+ * @param {string|null} [options.note]
+ * @param {string} [options.key]  the idempotency key; a new one when omitted
+ * @param {() => boolean} [options.isOnline]
+ * @param {number} [options.timeoutMs]
+ */
+export function postRestock({ fetch, userId, poolId, amount, note = null, key = randomKey(), isOnline = () => true, timeoutMs = SUBMIT_TIMEOUT_MS }) {
+    return postJson({
+        fetch, userId, key, isOnline, timeoutMs,
+        url: `/api/pools/${poolId}/restocks`,
+        body: note === null || note === '' ? { amount } : { amount, note },
+    });
+}
+
+/**
+ * POST /api/pools/{pool}/allocations/{seq}/corrections (supervisor). Same contract as postRestock.
+ *
+ * @param {object} options
+ * @param {number} options.allocationSeq  the entry number the log shows
+ * @param {'amend'|'void'} options.kind
+ * @param {number|null} [options.amount]  the new units for an amend; left out for a void
+ * @param {string} options.reason
+ */
+export function postCorrection({ fetch, userId, poolId, allocationSeq, kind, amount = null, reason, key = randomKey(), isOnline = () => true, timeoutMs = SUBMIT_TIMEOUT_MS }) {
+    return postJson({
+        fetch, userId, key, isOnline, timeoutMs,
+        url: `/api/pools/${poolId}/allocations/${allocationSeq}/corrections`,
+        body: kind === 'void' ? { kind, reason } : { kind, amount, reason },
+    });
+}
+
+/**
+ * GET /api/pools/{pool}/audit (supervisor): the audit view. Throws when the server says no.
+ */
+export async function fetchAudit({ fetch, userId, poolId, signal }) {
+    return getJson(fetch, `/api/pools/${poolId}/audit`, userId, signal);
+}
+
+async function postJson({ fetch, userId, url, body, key, isOnline, timeoutMs }) {
+    if (!isOnline()) {
+        return { offline: true, message: OFFLINE_MESSAGE, key };
+    }
+
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+
+    try {
+        const response = await fetch(url, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                Accept: 'application/json',
+                'X-Demo-User': String(userId),
+                'Idempotency-Key': key,
+            },
+            body: JSON.stringify(body),
+            signal: controller.signal,
+        });
+        let parsed = null;
+
+        try {
+            parsed = await response.json();
+        } catch {
+            // Not JSON (for example a gateway page): the caller sees a status and no body.
+        }
+
+        return { status: response.status, body: parsed, key };
+    } finally {
+        clearTimeout(timer);
+    }
+}
+
+/**
  * GET /api/pools/{pool}: the snapshot. Throws when the server says no, so the caller keeps what it has.
  */
 export async function fetchSnapshot({ fetch, userId, poolId, signal }) {

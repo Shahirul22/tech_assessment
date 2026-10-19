@@ -34,6 +34,9 @@ export function initialState(snapshot, epochNow = null) {
         gapSince: null,
         // True from the moment a snapshot is requested until it is applied; keeps the request to one.
         snapshotPending: false,
+        // True after a correction event: a correction can change an older row, a status and derived expiry entries at
+        // once, so one snapshot fixes all of them (M3 DD9).
+        snapshotWanted: false,
     };
 }
 
@@ -48,7 +51,7 @@ export function applyEvent(state, event, now, epochNow = now) {
     }
 
     if (event.version === state.version + 1) {
-        return drain(advance(state, event, epochNow), now, true, epochNow);
+        return withSnapshotRequest(drain(advance(state, event, epochNow), now, true, epochNow));
     }
 
     return gapEffect(
@@ -77,7 +80,11 @@ export function applySnapshot(state, snapshot, now = null, epochNow = now) {
     if (snapshot.version === state.version) {
         // Same version, as with a poll: keep older pages the operator loaded and just refresh what the snapshot shows.
         // The derived expiry entries, the viewer block and the next expiry can change without a version change.
-        const log = snapshot.log.reduce((entries, entry) => upsertEntry(entries, entry), state.log);
+        // After a correction, rows the snapshot no longer has (an expiry entry of a voided entry) must go: the snapshot's
+        // window replaces what the screen showed there, and only older pages loaded by "Show older" are kept.
+        const log = state.snapshotWanted
+            ? replaceWindow(state.log, snapshot.log)
+            : snapshot.log.reduce((entries, entry) => upsertEntry(entries, entry), state.log);
 
         return {
             state: {
@@ -87,6 +94,7 @@ export function applySnapshot(state, snapshot, now = null, epochNow = now) {
                 ...clockAndViewer(snapshot, epochNow),
                 viewerVersion: snapshot.version,
                 snapshotPending: false,
+                snapshotWanted: false,
             },
             effect: null,
         };
@@ -102,9 +110,10 @@ export function applySnapshot(state, snapshot, now = null, epochNow = now) {
         viewerVersion: snapshot.version,
         buffered: state.buffered.filter((event) => event.version > snapshot.version),
         snapshotPending: false,
+        snapshotWanted: false,
     };
 
-    return drain(replaced, now, true, epochNow);
+    return withSnapshotRequest(drain(replaced, now, true, epochNow));
 }
 
 /**
@@ -128,6 +137,25 @@ export function applyOwnResult(state, result, now, epochNow = now) {
     }
 
     return { ...applied, state: { ...applied.state, viewer: result.viewer, viewerVersion: result.pool.version } };
+}
+
+/**
+ * The result of this screen's own restock (the HTTP response): the same rules as a live event, so the broadcast copy is
+ * a duplicate. A restock is an ordinary entry: remaining and the log move at once.
+ *
+ * @param {{restock: object, pool: {version: number, remaining: number}}} result
+ */
+export function applyOwnRestock(state, result, now, epochNow = now) {
+    return applyEvent(state, { version: result.pool.version, remaining: result.pool.remaining, entry: entryFromRestock(result.restock) }, now, epochNow);
+}
+
+/**
+ * The result of this screen's own correction. Like the broadcast, it bumps the version and asks for one snapshot.
+ *
+ * @param {{correction: object, pool: {version: number, remaining: number}}} result
+ */
+export function applyOwnCorrection(state, result, now, epochNow = now) {
+    return applyEvent(state, { version: result.pool.version, remaining: result.pool.remaining, entry: entryFromCorrection(result.correction) }, now, epochNow);
 }
 
 /**
@@ -177,7 +205,45 @@ export function entryFromAllocation(allocation) {
     };
 }
 
+/**
+ * The restock in an HTTP result, in the shape of a log entry (plan §6).
+ */
+export function entryFromRestock(restock) {
+    return {
+        seq: restock.seq,
+        cursor: String(restock.seq),
+        kind: 'restock',
+        at: restock.recorded_at,
+        actor: restock.actor,
+        amount: restock.amount,
+        note: restock.note ?? null,
+    };
+}
+
+/**
+ * The correction in an HTTP result, in the shape of a log entry (plan §6).
+ */
+export function entryFromCorrection(correction) {
+    return {
+        seq: correction.seq,
+        cursor: String(correction.seq),
+        kind: 'correction',
+        at: correction.effective_at,
+        supervisor: correction.supervisor,
+        operator: correction.operator,
+        allocation_seq: correction.allocation_seq,
+        correction_kind: correction.kind,
+        change: { from: correction.from, to: correction.kind === 'void' ? null : correction.to },
+        reason: correction.reason,
+    };
+}
+
 function advance(state, event, epochNow = null) {
+    // A correction only moves the version: its effects (rows, statuses, expiry entries) come with the snapshot.
+    if (event.entry?.kind === 'correction') {
+        return { ...state, version: event.version, snapshotWanted: true };
+    }
+
     return {
         ...state,
         version: event.version,
@@ -242,6 +308,44 @@ function drain(state, now, moved, epochNow = null) {
     }
 
     return gapEffect({ ...current, gapSince: moved ? now : current.gapSince }, now);
+}
+
+/**
+ * After a correction was applied, ask for the one snapshot that brings its effects, unless one is already on its way or
+ * the gap logic is already waiting for a missing update (which ends in a snapshot too).
+ */
+function withSnapshotRequest(result) {
+    const { state, effect } = result;
+
+    if (!state.snapshotWanted || state.snapshotPending || effect === 'snapshot') {
+        return result;
+    }
+
+    return { state: { ...state, snapshotPending: true }, effect: 'snapshot' };
+}
+
+/**
+ * The snapshot's rows replace everything on screen as new as the snapshot's oldest row; older rows stay.
+ */
+function replaceWindow(log, snapshotLog) {
+    if (snapshotLog.length === 0) {
+        return log;
+    }
+
+    const oldest = position(snapshotLog[snapshotLog.length - 1]);
+    const older = log.filter((entry) => comparePosition(position(entry), oldest) < 0);
+
+    return [...snapshotLog, ...older].sort(compareNewestFirst);
+}
+
+function comparePosition(a, b) {
+    for (let i = 0; i < 3; i++) {
+        if (a[i] !== b[i]) {
+            return a[i] - b[i];
+        }
+    }
+
+    return 0;
 }
 
 function gapEffect(state, now) {

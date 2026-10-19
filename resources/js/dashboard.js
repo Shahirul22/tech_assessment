@@ -8,6 +8,7 @@ import { createExpiryTimer } from './expiry-timer.js';
 import { maxAmount, validateAmount } from './form-rules.js';
 import { renderEntry } from './log-renderer.js';
 import { applyEvent, applyOlderPage, applySnapshot, checkGap, initialState, nextExpiryAt, oldestCursor } from './pool-state.js';
+import { supervisorPart } from './supervisor.js';
 import { parseInstant, timeLeftText, windowText } from './time-left.js';
 import { chooseViewer, loadViewerId, saveViewerId } from './viewer.js';
 
@@ -32,7 +33,7 @@ export function poolDashboard() {
     let expiryTimer = null;
     let clockTimer = null;
 
-    return {
+    const dashboard = {
         pool: { id: null, name: '' },
         // The pool state: version, remaining, log, and what is waiting for a missing update (see pool-state.js).
         state: initialState({ version: 0, remaining: 0, log: [] }),
@@ -78,6 +79,14 @@ export function poolDashboard() {
                 }
 
                 this.newSubmitFlow();
+                this.newSupervisorFlow();
+            });
+
+            // Opening the supervisor tab reads the audit (FR16).
+            this.$watch('tab', (tab) => {
+                if (tab === 'supervisor') {
+                    this.loadAudit();
+                }
             });
 
             this.startLive();
@@ -160,6 +169,11 @@ export function poolDashboard() {
 
             this.setState(state);
             this.handle(effect);
+
+            // Another supervisor's correction changes the audit too.
+            if (event.entry?.kind === 'correction' && this.isSupervisor && this.tab === 'supervisor') {
+                this.loadAudit();
+            }
         },
 
         /** Keep the new pool state, and point the expiry timer at the next expiry it knows of. */
@@ -418,6 +432,11 @@ export function poolDashboard() {
                 key: entry.cursor ?? `entry-${index}`,
                 pending: false,
                 ...renderEntry(entry, this.userId),
+                // A supervisor can correct an allocation that has not been voided; the form shows what it holds now.
+                correctable: entry.kind === 'allocation' && entry.voided !== true,
+                seq: entry.seq,
+                units: entry.corrected_to ?? entry.granted,
+                operatorName: entry.operator?.name ?? '',
             }));
 
             // A request that is on its way, or whose answer was lost, shows at the top at once. It is not in the totals.
@@ -438,4 +457,7 @@ export function poolDashboard() {
             return user.role === 'supervisor' ? `${user.name} (supervisor)` : `${user.name} (${user.tier})`;
         },
     };
+
+    // The supervisor's screen is its own module; merge it with the property descriptors kept, so getters stay getters.
+    return Object.defineProperties(dashboard, Object.getOwnPropertyDescriptors(supervisorPart()));
 }

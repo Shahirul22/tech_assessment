@@ -96,7 +96,12 @@
                     <template x-for="row in rows" x-bind:key="row.key">
                         <li class="log__row" x-bind:class="{ 'log__row--own': row.own, 'log__row--pending': row.pending }">
                             <span class="log__label" x-text="row.label"></span>
-                            <span class="log__text"><span x-text="row.text"></span> <span class="log__marker" x-show="row.own">You</span></span>
+                            <span class="log__text">
+                                <span x-text="row.text"></span> <span class="log__marker" x-show="row.own">You</span>
+                                {{-- Supervisors pick the entry to correct from the log (M3 DD13). --}}
+                                <button class="button button--secondary log__action" type="button" x-show="isSupervisor && row.correctable" x-cloak
+                                    x-on:click="startCorrection(row)" x-bind:aria-label="'Correct entry #' + row.seq">Correct</button>
+                            </span>
                         </li>
                     </template>
                 </ol>
@@ -106,10 +111,97 @@
             </section>
         </div>
 
-        {{-- The supervisor's own screen arrives with M3. --}}
-        <section class="panel" id="supervisor-view" aria-labelledby="supervisor-heading" x-show="showSupervisor" x-cloak>
+        {{-- The supervisor's screen: restock, correct or void, and the audit view (FR18). Operators never see it. --}}
+        <section class="panel supervisor" id="supervisor-view" aria-labelledby="supervisor-heading" x-show="showSupervisor" x-cloak>
             <h2 class="panel__title" id="supervisor-heading">Supervisor</h2>
-            <p class="placeholder">Placeholder — arrives in M3</p>
+            <p class="remaining__label">Remaining: <span id="supervisor-remaining" x-text="remaining">{{ $snapshot['remaining'] }}</span></p>
+
+            <form class="supervisor__form" id="restock-form" novalidate aria-labelledby="restock-heading" x-on:submit.prevent="submitRestock()">
+                <h3 class="panel__subtitle" id="restock-heading">Restock</h3>
+                <div class="field">
+                    <label class="field__label" for="restock-amount">Units to add</label>
+                    <input class="input" id="restock-amount" name="amount" type="number" inputmode="numeric" min="1" step="1" autocomplete="off"
+                        x-model="restockAmount" x-on:input="restockEdited()" x-bind:aria-invalid="restockMessage !== ''" aria-describedby="restock-message">
+                    <label class="field__label" for="restock-note">Note (optional)</label>
+                    <input class="input input--wide" id="restock-note" name="note" type="text" maxlength="255" autocomplete="off" x-model="restockNote" x-on:input="restockEdited()">
+                    <p class="hint hint--warning" id="restock-message" role="alert" x-text="restockMessage"></p>
+                    <p class="hint hint--warning" id="restock-offline" x-show="isOffline" x-cloak>You are offline — nothing was sent</p>
+                    <button class="button button--block" type="submit" id="restock-submit" x-bind:disabled="restockDisabled" x-text="restockLabel">Add units</button>
+                </div>
+                <div id="restock-result" role="status">
+                    <p class="banner" x-show="restockBanner" x-cloak x-bind:class="restockBanner ? 'banner--' + restockBanner.tone : ''">
+                        <span id="restock-result-text" x-text="restockBanner?.text"></span>
+                        <button class="button button--secondary" type="button" id="restock-retry" x-show="isRestockUnconfirmed" x-cloak x-on:click="retryRestock()">Retry</button>
+                        <span class="banner__note" x-show="restockBanner?.message" x-text="restockBanner?.message"></span>
+                    </p>
+                </div>
+            </form>
+
+            <form class="supervisor__form" id="correction-form" novalidate aria-labelledby="correction-heading" x-on:submit.prevent="submitCorrection()">
+                <h3 class="panel__subtitle" id="correction-heading">Correct or void an entry</h3>
+                <p class="hint" id="correction-target" x-text="correctionTarget">Pick an entry in the log with its Correct button.</p>
+                <div class="field">
+                    <div class="field__row">
+                        <label class="field__label" for="correction-seq">Entry</label>
+                        <input class="input" id="correction-seq" name="allocation_seq" type="text" readonly x-bind:value="correction.seq === null ? '' : '#' + correction.seq">
+                        <label class="field__label" for="correction-units">Holds now</label>
+                        <input class="input" id="correction-units" name="current_units" type="text" readonly x-bind:value="correction.units === null ? '' : correction.units">
+                    </div>
+
+                    <fieldset class="choice" id="correction-kind">
+                        <legend class="field__label">Change</legend>
+                        <label class="choice__option" for="correction-amend">
+                            <input class="choice__input" type="radio" id="correction-amend" name="correction-kind" value="amend" x-model="correctionKind" x-on:change="correctionEdited()" checked>
+                            <span>Amend</span>
+                        </label>
+                        <label class="choice__option" for="correction-void">
+                            <input class="choice__input" type="radio" id="correction-void" name="correction-kind" value="void" x-model="correctionKind" x-on:change="correctionEdited()">
+                            <span>Void</span>
+                        </label>
+                    </fieldset>
+
+                    <label class="field__label" for="correction-amount" x-show="correctionKind === 'amend'">New amount</label>
+                    <input class="input" id="correction-amount" name="amount" type="number" inputmode="numeric" min="1" step="1" autocomplete="off"
+                        x-show="correctionKind === 'amend'" x-model="correctionAmount" x-on:input="correctionEdited()" aria-describedby="correction-message">
+
+                    <label class="field__label" for="correction-reason">Reason</label>
+                    <input class="input input--wide" id="correction-reason" name="reason" type="text" maxlength="500" autocomplete="off" x-model="correctionReason" x-on:input="correctionEdited()">
+
+                    <p class="hint hint--warning" id="correction-message" role="alert" x-text="correctionMessage"></p>
+                    <p class="hint hint--warning" id="correction-offline" x-show="isOffline" x-cloak>You are offline — nothing was sent</p>
+                    <button class="button button--block" type="submit" id="correction-submit" x-bind:disabled="correctionDisabled" x-text="correctionLabel">Correct</button>
+                </div>
+                <div id="correction-result" role="status">
+                    <p class="banner" x-show="correctionBanner" x-cloak x-bind:class="correctionBanner ? 'banner--' + correctionBanner.tone : ''">
+                        <span id="correction-result-text" x-text="correctionBanner?.text"></span>
+                        <button class="button button--secondary" type="button" id="correction-retry" x-show="isCorrectionUnconfirmed" x-cloak x-on:click="retryCorrection()">Retry</button>
+                        <span class="banner__note" x-show="correctionBanner?.message" x-text="correctionBanner?.message"></span>
+                    </p>
+                </div>
+            </form>
+
+            <section class="supervisor__audit" id="audit" aria-labelledby="audit-heading">
+                <h3 class="panel__subtitle" id="audit-heading">Audit</h3>
+                <p class="hint hint--warning" id="audit-error" role="alert" x-show="auditError" x-cloak x-text="auditError"></p>
+                <ul class="audit__hindsight" id="audit-hindsight">
+                    <template x-for="line in audit.hindsight" x-bind:key="line">
+                        <li class="audit__flag" x-text="line"></li>
+                    </template>
+                </ul>
+                <p class="hint" id="audit-empty" x-show="audit.empty" x-cloak x-text="audit.emptyText">No corrections yet</p>
+                <ol class="audit" id="audit-list">
+                    <template x-for="row in audit.rows" x-bind:key="row.seq">
+                        <li class="audit__row">
+                            <span class="audit__text" x-text="row.text"></span>
+                            <ul class="audit__points">
+                                <template x-for="point in row.points" x-bind:key="point">
+                                    <li x-text="point"></li>
+                                </template>
+                            </ul>
+                        </li>
+                    </template>
+                </ol>
+            </section>
         </section>
     </div>
 

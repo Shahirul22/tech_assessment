@@ -29,16 +29,17 @@ test('renders a restock, with or without a note', () => {
     const seed = { seq: 1, kind: 'restock', at: 'x', actor: null, amount: 100, note: 'Initial stock' };
     const added = { seq: 9, kind: 'restock', at: 'x', actor: dana, amount: 25, note: null };
 
-    assert.deepEqual(renderEntry(seed, 1), { label: 'Restock', text: '+100 units (Initial stock)', own: false });
-    assert.equal(renderEntry(added, 1).text, '+25 units');
+    assert.deepEqual(renderEntry(seed, 1), { label: 'Restock', text: '+100 units · Initial stock', own: false });
+    assert.equal(renderEntry(added, 1).text, 'Dana added 25 units');
+    assert.equal(renderEntry({ ...added, amount: 1, note: 'Delivery' }, 1).text, 'Dana added 1 unit · Delivery');
 });
 
 test('renders a correction, amend and void', () => {
-    const amend = { seq: 20, kind: 'correction', at: 'x', supervisor: dana, allocation_seq: 12, change: { from: 3, to: 2 }, reason: 'miscounted' };
-    const voided = { ...amend, change: { from: 3, to: null }, reason: 'duplicate' };
+    const amend = { seq: 20, kind: 'correction', at: 'x', supervisor: dana, operator: ana, allocation_seq: 12, correction_kind: 'amend', change: { from: 40, to: 20 }, reason: 'Counted wrong' };
+    const voided = { ...amend, correction_kind: 'void', change: { from: 40, to: null }, reason: 'Duplicate' };
 
-    assert.deepEqual(renderEntry(amend, 1), { label: 'Correction', text: 'Dana changed #12 from 3 to 2: miscounted', own: false });
-    assert.equal(renderEntry(voided, 1).text, 'Dana voided #12 (was 3): duplicate');
+    assert.deepEqual(renderEntry(amend, 99), { label: 'Correction', text: "Dana changed Ana's request #12: 40 → 20 · Counted wrong", own: false });
+    assert.equal(renderEntry(voided, 99).text, "Dana voided Ana's request #12 (40 → 0) · Duplicate");
 });
 
 test('renders an expiry with its operator and the allocation it belongs to', () => {
@@ -95,4 +96,39 @@ test('labels are words, not symbols', () => {
 
 test('an unknown kind is shown plainly instead of throwing', () => {
     assert.deepEqual(renderEntry({ seq: 5, kind: 'mystery' }, 1), { label: 'Entry', text: 'Unknown entry #5', own: false });
+});
+
+test('highlights a correction only on the screen of the operator it corrected', () => {
+    const amend = { seq: 20, kind: 'correction', at: 'x', supervisor: dana, operator: ana, allocation_seq: 12, correction_kind: 'amend', change: { from: 40, to: 20 }, reason: 'Counted wrong' };
+
+    assert.equal(renderEntry(amend, 1).own, true, 'Ana');
+    assert.equal(renderEntry(amend, 2).own, false, 'Ben');
+    assert.equal(renderEntry(amend, null).own, false, 'nobody picked yet');
+    assert.equal(renderEntry(amend, 4).own, false, 'the supervisor');
+});
+
+test('reads a correction without an operator, as an older server sent it', () => {
+    const old = { seq: 20, kind: 'correction', at: 'x', supervisor: dana, allocation_seq: 12, change: { from: 3, to: 2 }, reason: 'miscounted' };
+
+    assert.deepEqual(renderEntry(old, 1), { label: 'Correction', text: 'Dana changed request #12: 3 → 2 · miscounted', own: false });
+});
+
+test('a corrected allocation still shows the original request and grant, and says it was corrected', () => {
+    const corrected = { ...allocation(ana, 40, 40, 'full'), corrected_to: 20, voided: false };
+
+    assert.deepEqual(renderEntry(corrected, 1), { label: 'Allocation', text: 'Ana: 40 granted · corrected to 20', own: true });
+    assert.equal(renderEntry({ ...allocation(ben, 6, 4, 'partial'), corrected_to: 2, voided: false }, 1).text, 'Ben: 4 of 6 granted · corrected to 2');
+    assert.equal(renderEntry({ ...allocation(ben, 3, 0, 'none'), corrected_to: 3, voided: false }, 1).text, 'Ben requested 3, granted 0 · corrected to 3');
+});
+
+test('a voided allocation says "voided" in words and still shows the original', () => {
+    const voided = { ...allocation(ana, 40, 40, 'full'), corrected_to: 0, voided: true };
+
+    assert.equal(renderEntry(voided, 1).text, 'Ana: 40 granted · voided');
+    assert.equal(renderEntry({ ...voided, type: 'temporary' }, 1).text, 'Ana: 40 granted · temporary · voided');
+});
+
+test('an uncorrected allocation reads as before, with or without the new keys', () => {
+    assert.equal(renderEntry({ ...allocation(ana, 3, 3, 'full'), corrected_to: null, voided: false }, 1).text, 'Ana: 3 granted');
+    assert.equal(renderEntry(allocation(ana, 3, 3, 'full'), 1).text, 'Ana: 3 granted');
 });
