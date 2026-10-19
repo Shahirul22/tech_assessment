@@ -13,7 +13,7 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 /**
  * A ledger entry that adds capacity to a pool. The seed is the restock at seq 1.
  */
-#[Fillable(['pool_id', 'seq', 'amount', 'actor_id', 'note', 'recorded_at'])]
+#[Fillable(['pool_id', 'seq', 'amount', 'actor_id', 'note', 'recorded_at', 'idempotency_key'])]
 #[WithoutTimestamps]
 // Keep the microseconds of timestamptz(6) columns; the default format drops them.
 #[DateFormat('Y-m-d H:i:s.uP')]

@@ -23,7 +23,7 @@ function expectedColumns(): array
         'restocks' => [
             'id' => ['bigint', false], 'pool_id' => ['bigint', false], 'seq' => ['bigint', false],
             'amount' => ['integer', false], 'actor_id' => ['bigint', true], 'note' => ['text', true],
-            'recorded_at' => [TS, false],
+            'recorded_at' => [TS, false], 'idempotency_key' => ['text', true],
         ],
         'allocations' => [
             'id' => ['bigint', false], 'pool_id' => ['bigint', false], 'seq' => ['bigint', false],
@@ -34,7 +34,7 @@ function expectedColumns(): array
         'corrections' => [
             'id' => ['bigint', false], 'pool_id' => ['bigint', false], 'seq' => ['bigint', false],
             'allocation_id' => ['bigint', false], 'supervisor_id' => ['bigint', false], 'kind' => ['text', false],
-            'new_amount' => ['integer', true], 'reason' => ['text', false], 'effective_at' => [TS, false],
+            'from_amount' => ['integer', false], 'new_amount' => ['integer', true], 'reason' => ['text', false], 'effective_at' => [TS, false],
             'recorded_at' => [TS, false], 'idempotency_key' => ['text', false],
         ],
     ];
@@ -85,7 +85,7 @@ function correctionRow(int $poolId, int $allocationId, int $supervisorId, array 
 {
     return $overrides + [
         'pool_id' => $poolId, 'seq' => 2, 'allocation_id' => $allocationId, 'supervisor_id' => $supervisorId,
-        'kind' => 'amend', 'new_amount' => 2, 'reason' => 'typo', 'effective_at' => ts(), 'recorded_at' => ts(),
+        'kind' => 'amend', 'from_amount' => 3, 'new_amount' => 2, 'reason' => 'typo', 'effective_at' => ts(), 'recorded_at' => ts(),
         'idempotency_key' => 'corr-1',
     ];
 }
@@ -222,4 +222,35 @@ it('enforces the foreign keys', function () {
     expectRejected('restocks_actor_id_foreign', fn () => DB::table('restocks')->insert(['pool_id' => $poolId, 'seq' => 1, 'amount' => 1, 'actor_id' => 999999, 'recorded_at' => ts()]));
     expectRejected('allocations_operator_id_foreign', fn () => DB::table('allocations')->insert(allocationRow($poolId, 999999)));
     expectRejected('corrections_allocation_id_foreign', fn () => DB::table('corrections')->insert(correctionRow($poolId, 999999, $operatorId)));
+});
+
+it('requires corrections.from_amount and rejects a negative one', function () {
+    $poolId = newPool();
+    $operatorId = newUser();
+    $supervisorId = newUser(['role' => 'supervisor', 'tier' => null]);
+    $allocationId = DB::table('allocations')->insertGetId(allocationRow($poolId, $operatorId));
+
+    $row = correctionRow($poolId, $allocationId, $supervisorId);
+    unset($row['from_amount']);
+    expectRejected('from_amount', fn () => DB::table('corrections')->insert($row));
+    expectRejected('corrections_from_amount_check', fn () => DB::table('corrections')->insert(correctionRow($poolId, $allocationId, $supervisorId, ['from_amount' => -1])));
+
+    DB::table('corrections')->insert(correctionRow($poolId, $allocationId, $supervisorId, ['from_amount' => 0]));
+    expect(DB::table('corrections')->value('from_amount'))->toBe(0);
+});
+
+it('lets restocks omit the idempotency key but keeps a key unique within one pool', function () {
+    $poolId = newPool();
+    $otherPoolId = newPool();
+
+    DB::table('restocks')->insert(['pool_id' => $poolId, 'seq' => 1, 'amount' => 5, 'recorded_at' => ts()]);
+    DB::table('restocks')->insert(['pool_id' => $poolId, 'seq' => 2, 'amount' => 5, 'recorded_at' => ts()]);
+    DB::table('restocks')->insert(['pool_id' => $poolId, 'seq' => 3, 'amount' => 5, 'recorded_at' => ts(), 'idempotency_key' => 'r1']);
+
+    expectRejected('restocks_pool_id_idempotency_key_unique', fn () => DB::table('restocks')->insert(
+        ['pool_id' => $poolId, 'seq' => 4, 'amount' => 5, 'recorded_at' => ts(), 'idempotency_key' => 'r1'],
+    ));
+
+    DB::table('restocks')->insert(['pool_id' => $otherPoolId, 'seq' => 1, 'amount' => 5, 'recorded_at' => ts(), 'idempotency_key' => 'r1']);
+    expect(DB::table('restocks')->count())->toBe(4);
 });

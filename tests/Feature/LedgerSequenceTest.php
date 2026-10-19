@@ -50,7 +50,7 @@ it('numbers restocks, allocations and corrections from one sequence with no repe
         Restock::create(['pool_id' => $pool->id, 'seq' => $sequence->next($locked), 'amount' => 20, 'actor_id' => $dana->id, 'recorded_at' => $now]);
         Correction::create([
             'pool_id' => $pool->id, 'seq' => $sequence->next($locked), 'allocation_id' => $allocation->id, 'supervisor_id' => $dana->id,
-            'kind' => 'void', 'new_amount' => null, 'reason' => 'test', 'effective_at' => $now, 'recorded_at' => $now, 'idempotency_key' => 'c-1',
+            'kind' => 'void', 'from_amount' => 1, 'new_amount' => null, 'reason' => 'test', 'effective_at' => $now, 'recorded_at' => $now, 'idempotency_key' => 'c-1',
         ]);
     });
 

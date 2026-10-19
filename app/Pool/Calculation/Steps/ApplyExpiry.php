@@ -42,6 +42,8 @@ class ApplyExpiry
             effectiveAt: $entry->effectiveAt,
             active: $now->lessThan($expiresAt),
             expiresAt: $expiresAt,
+            correctedFrom: $entry->correctedFrom,
+            voided: $entry->voided,
         );
     }
 }

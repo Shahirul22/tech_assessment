@@ -42,7 +42,7 @@
 
 ## Phase 1 — Foundation (blocks everything after)
 
-### [ ] T002 Add the M3 migration, model fields and factories
+### [x] T002 Add the M3 migration, model fields and factories
 - **Refs:** DD3, FR6.8, FR6.11, plan §5, AC-US10.3
 - **Depends on:** T001
 - **Files:** `database/migrations/2026_10_21_000001_add_m3_columns_to_ledger_tables.php` (create), `app/Models/Correction.php` (edit), `app/Models/Restock.php` (edit), `database/factories/CorrectionFactory.php` (create; there is none yet), `database/factories/RestockFactory.php` (edit), `tests/Feature/SchemaContractTest.php` (edit)
@@ -50,8 +50,9 @@
 - **Verify:** `APP php artisan migrate:fresh --seed --force` → succeeds; `APP php artisan test --compact tests/Feature/SchemaContractTest.php tests/Feature/SeedersTest.php` → pass, with new cases: `from_amount` NOT NULL and rejects −1; `restocks.idempotency_key` nullable, two rows with NULL key allowed, two rows with the same non-null key in one pool rejected; the M1 CHECKs on `corrections` still hold.
 - **Done when:** the schema has the two columns and the contract test proves them (AC-US7.2 of M1 stays true, plus DD3).
 - **Out of scope:** any service, repository or UI change.
+- Note: Boost queries: search-docs `migrations modifying columns add column` and `eloquent factories`; database-schema `corrections`. Migration uses raw DB::statement (house style, like the corrections migration). Fixture fallout: raw correction inserts in LedgerRepositoryTest, LedgerSequenceTest and LogEntryResourceTest, plus the correctionRow helper in SchemaContractTest, gained `from_amount` (NOT NULL by design); assertions unchanged.
 
-### [ ] T003 Add the trailing entry fields and load entry times in `LedgerRepository`
+### [x] T003 Add the trailing entry fields and load entry times in `LedgerRepository`
 - **Refs:** DD2, plan §4, plan §5
 - **Depends on:** T002
 - **Files:** `app/Pool/Calculation/AllocationEntry.php` (edit), `app/Pool/Calculation/RestockEntry.php` (edit), `app/Pool/Calculation/CorrectionEntry.php` (edit), `app/Pool/LedgerRepository.php` (edit), `tests/Feature/LedgerRepositoryTest.php` (edit)
@@ -59,8 +60,9 @@
 - **Verify:** `APP php artisan test --compact tests/Feature/LedgerRepositoryTest.php tests/Unit` → all existing cases pass; new cases: a loaded restock has `at` equal to its `recorded_at` with microseconds; a loaded correction has `at` equal to its `effective_at`.
 - **Done when:** the ledger carries the time of every entry kind and nothing existing changed.
 - **Out of scope:** the new `Ledger` methods (T004), any step behaviour.
+- Note: Boost query: search-docs `eloquent factories` (same session as T002; no new API used). Loaded restock `at` = recorded_at and correction `at` = effective_at with microseconds. The new test inserts timestamps as strings, because binding a CarbonImmutable through the query builder drops microseconds.
 
-### [ ] T004 Add `Ledger::asOf`, `instantAt` and `evaluationInstant`
+### [x] T004 Add `Ledger::asOf`, `instantAt` and `evaluationInstant`
 - **Refs:** DD2, NFR1, AC-US7.1, AC-US7.4, plan §6 "Calculation contract"
 - **Depends on:** T003
 - **Files:** `app/Pool/Calculation/Ledger.php` (edit), `tests/Unit/LedgerInstantTest.php` (create)
@@ -68,8 +70,9 @@
 - **Verify:** `APP php artisan test --compact tests/Unit/LedgerInstantTest.php` → pass: `asOf` filters restocks, allocations and corrections; `instantAt` counts a restock and a correction that are newer than every allocation; null `at` is skipped; `evaluationInstant` returns the receipt when it is newest and the newest entry time when an earlier-received request commits later; the instant never decreases as `seq` grows.
 - **Done when:** the non-decreasing instant rule of DD2 is proved at unit level.
 - **Out of scope:** changing `AllocationService` (T006).
+- Note: Boost query: none needed (pure PHP value-object logic; no Laravel API). Added one helper not named in the task, `Ledger::anchorAt(CarbonImmutable): int` (highest seq whose time is at or before the instant, 0 when none), used by T008/T009 to place expiry points by M2's anchor rule.
 
-### [ ] T005 Extract `PoolWriteGate` and move `AllocationService` onto it with no behaviour change
+### [x] T005 Extract `PoolWriteGate` and move `AllocationService` onto it with no behaviour change
 - **Refs:** DD1, FR6.10, NFR1, AC-US10.2
 - **Depends on:** T001
 - **Files:** `app/Pool/PoolWriteGate.php` (create), `app/Pool/AllocationService.php` (edit)
@@ -77,8 +80,9 @@
 - **Verify:** `APP php artisan test --compact` → everything that passed in T001 still passes; `docker compose up -d --wait && APP php artisan test --group=concurrency` → all pass, with the same p95 line.
 - **Done when:** one class owns "one writer at a time" and the full M1/M2 suite is unchanged (DD1).
 - **Out of scope:** the evaluation-instant change (T006), restocks and corrections.
+- Note: Boost queries: search-docs `database transactions pessimistic locking lockForUpdate` and `broadcasting events after commit`. Full suite 279 passed + 4 todos; concurrency 8 passed, 50x3 p95 0.753 s (baseline run 0.7 s).
 
-### [ ] T006 Move `AllocationService` onto the `Ledger` instant methods
+### [x] T006 Move `AllocationService` onto the `Ledger` instant methods
 - **Refs:** DD2, DD3 (M2), FR6.11, AC-US10.2
 - **Depends on:** T004, T005
 - **Files:** `app/Pool/AllocationService.php` (edit), `tests/Unit/LedgerInstantTest.php` (edit, only if a case is missing)
@@ -86,8 +90,9 @@
 - **Verify:** `APP php artisan test --compact` → all pass as in T001; `APP php artisan test --group=concurrency` → all pass.
 - **Done when:** one place (the ledger) decides the evaluation instant for submits, and replays still match (M2 AC-US7.1).
 - **Out of scope:** restock and correction code.
+- Note: Boost query: same two as T005 (no new Laravel API). No M1/M2 fixture needed fixing: nothing failed, so nothing to log in plan §12 for this.
 
-### [ ] T007 Implement `ApplyCorrections` and `CorrectionStepTest`
+### [x] T007 Implement `ApplyCorrections` and `CorrectionStepTest`
 - **Refs:** FR6, FR6.1, FR6.4, FR6.6, FR7, NFR-M3.1, DD5, AC-US2.1, AC-US4.1, AC-US5.1, AC-US10.1
 - **Depends on:** T003
 - **Files:** `app/Pool/Calculation/Steps/ApplyCorrections.php` (edit), `tests/Unit/CorrectionStepTest.php` (create), `tests/Unit/CalculatorPendingTest.php` (edit: remove three todos)
@@ -95,8 +100,9 @@
 - **Verify:** `APP php artisan test --compact tests/Unit/CorrectionStepTest.php tests/Unit/CalculatorPendingTest.php tests/Unit/PoolCalculatorTest.php` → pass; pending list shows only the "refuses a correction…" todo.
 - **Done when:** the correction step is real and pure (F3, NFR-M3.1, AC-US10.1 for these three tests).
 - **Out of scope:** the refusal rule (T011), history replay, any service.
+- Note: Boost query: none needed, pure PHP step with no Laravel API. ApplyExpiry now carries `correctedFrom`/`voided` through (it rebuilds entries; without this the corrected marker was lost). The corrected ledger keeps the input corrections list as is, so the shuffle test compares allocations.
 
-### [ ] T008 [P] Implement `HistoryReplay` (hindsight windows)
+### [x] T008 [P] Implement `HistoryReplay` (hindsight windows)
 - **Refs:** FR15, DD7, D11, AC-US3.4, AC-US5.2
 - **Depends on:** T004, T007
 - **Files:** `app/Pool/Audit/HistoryReplay.php` (create), `app/Pool/Audit/HistoryPoint.php` (create), `app/Pool/Audit/HindsightWindow.php` (create), `tests/Unit/HistoryReplayTest.php` (create)
@@ -104,8 +110,9 @@
 - **Verify:** `APP php artisan test --compact tests/Unit/HistoryReplayTest.php` → pass: PRD example (Ana 40 → 60 correction, Ben 50, Cara 10, restock +50 at 13:00, correction at 14:00) gives remaining 40, −10, −20, then 30 after the restock; one window from Ben's entry to the restock, `lowest` −20, 11:00–13:00 lies inside it, `correctionSeqs` lists the raise; no correction → no window; an expiry point can end a window; a lowering only → no window.
 - **Done when:** AC-US3.4 and AC-US5.2 numbers hold at unit level.
 - **Out of scope:** the endpoint (T018), status history.
+- Note: Pure PHP, no Boost query. Deviation within intent: `overdrawn()` takes the full ledger as a second argument (`overdrawn(array $points, Ledger $full)`), because `correctionSeqs` needs the corrections and allocation numbers; `HistoryPoint` gained a trailing optional `allocationSeq` for the expiry tie-break; `HistoryReplay` also takes `RulesConfig`. PRD example gives 100, 40, -10, -20, 30, 30 and one window from seq 3 (10:00) to seq 5 (13:00), lowest -20.
 
-### [ ] T009 [P] Implement `StatusHistory` (before/after per correction)
+### [x] T009 [P] Implement `StatusHistory` (before/after per correction)
 - **Refs:** FR7, FR7.1, FR7.2, DD8, PQ2, AC-US6.1, AC-US6.2
 - **Depends on:** T004, T007
 - **Files:** `app/Pool/Audit/StatusHistory.php` (create), `app/Pool/Audit/StatusChange.php` (create), `tests/Unit/StatusHistoryTest.php` (create)
@@ -113,6 +120,7 @@
 - **Verify:** `APP php artisan test --compact tests/Unit/StatusHistoryTest.php` → pass: Ana Consumed 28 at 09:00 and Consumed 5 at 10:30, first lowered to 20 at 14:00 → correction moment elevated → elevated; point "after Ana's request #…" at 10:30 high → elevated; now elevated → elevated is not listed; thresholds 30 → 29 (high → elevated) and 10 → 9 (elevated → standard); a void to 0 gives standard; an operator with no other entries gets only the correction moment and now.
 - **Done when:** AC-US6.1 and AC-US6.2 numbers hold at unit level.
 - **Out of scope:** the endpoint (T018), the hindsight windows.
+- Note: Pure PHP, no Boost query. `forCorrection()` has a fourth optional argument `string $operatorName` for the point labels (the ledger holds no names). The task's Verify text says the correction moment is 'elevated → elevated' for Ana 28 + 5 lowered to 20; the numbers in AC-US6.1 and the thresholds give 33 (high) → 25 (elevated), so the tests assert high → elevated at the correction moment, at request #3 and now. Reported to the user.
 
 **Checkpoint 1:** `APP php artisan test --compact` is green after the `PoolWriteGate` refactor and the migration; `tests/Unit` shows real passing tests for the correction step, the instant rule, the hindsight windows and the status history; only one `todo` ("refuses a correction that raises…") is left pending; the concurrency group still passes.
 

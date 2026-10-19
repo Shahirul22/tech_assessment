@@ -2,17 +2,19 @@
 
 namespace App\Models;
 
+use Database\Factories\CorrectionFactory;
 use Illuminate\Database\Eloquent\Attributes\DateFormat;
 use Illuminate\Database\Eloquent\Attributes\Fillable;
 use Illuminate\Database\Eloquent\Attributes\WithoutTimestamps;
+use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 /**
- * A supervisor's amend or void of an allocation. The table is empty in M1; M3 adds the behaviour.
+ * A supervisor's amend or void of an allocation. Append-only; `from_amount` is the units the entry held right before it.
  */
 #[Fillable([
-    'pool_id', 'seq', 'allocation_id', 'supervisor_id', 'kind', 'new_amount',
+    'pool_id', 'seq', 'allocation_id', 'supervisor_id', 'kind', 'from_amount', 'new_amount',
     'reason', 'effective_at', 'recorded_at', 'idempotency_key',
 ])]
 #[WithoutTimestamps]
@@ -20,6 +22,9 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 #[DateFormat('Y-m-d H:i:s.uP')]
 class Correction extends Model
 {
+    /** @use HasFactory<CorrectionFactory> */
+    use HasFactory;
+
     /**
      * Get the attributes that should be cast.
      *
@@ -29,6 +34,7 @@ class Correction extends Model
     {
         return [
             'seq' => 'integer',
+            'from_amount' => 'integer',
             'new_amount' => 'integer',
             'effective_at' => 'immutable_datetime',
             'recorded_at' => 'immutable_datetime',

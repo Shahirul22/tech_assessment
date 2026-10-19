@@ -68,8 +68,8 @@ it('renders a correction as a change from one amount to another, or to nothing f
     $at = CarbonImmutable::parse('2026-10-17 11:00:00 UTC');
     $row = ['pool_id' => $pool->id, 'allocation_id' => $allocation->id, 'supervisor_id' => $dana->id, 'effective_at' => $at, 'recorded_at' => $at];
 
-    $amend = Correction::create($row + ['seq' => 20, 'kind' => 'amend', 'new_amount' => 2, 'reason' => 'miscounted', 'idempotency_key' => 'a']);
-    $void = Correction::create($row + ['seq' => 21, 'kind' => 'void', 'new_amount' => null, 'reason' => 'duplicate', 'idempotency_key' => 'b']);
+    $amend = Correction::create($row + ['seq' => 20, 'kind' => 'amend', 'from_amount' => 3, 'new_amount' => 2, 'reason' => 'miscounted', 'idempotency_key' => 'a']);
+    $void = Correction::create($row + ['seq' => 21, 'kind' => 'void', 'from_amount' => 3, 'new_amount' => null, 'reason' => 'duplicate', 'idempotency_key' => 'b']);
 
     expect(rendered(LogEntry::fromCorrection($amend->load(['supervisor', 'allocation']))))->toBe([
         'seq' => 20, 'cursor' => '20', 'kind' => 'correction', 'at' => '2026-10-17T11:00:00.000000Z',

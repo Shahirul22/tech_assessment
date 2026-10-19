@@ -25,6 +25,7 @@ class RestockFactory extends Factory
             'amount' => 100,
             'actor_id' => null,
             'note' => null,
+            'idempotency_key' => null,
             'recorded_at' => now()->toImmutable(),
         ];
     }

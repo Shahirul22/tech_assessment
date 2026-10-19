@@ -31,7 +31,7 @@ it('loads a pool\'s ledger as the calculator\'s input', function () {
     ]);
     DB::table('corrections')->insert([
         'pool_id' => $pool->id, 'seq' => 4, 'allocation_id' => $consumed->id, 'supervisor_id' => $dana->id,
-        'kind' => 'amend', 'new_amount' => 2, 'reason' => 'typo', 'effective_at' => $at, 'recorded_at' => $at,
+        'kind' => 'amend', 'from_amount' => 3, 'new_amount' => 2, 'reason' => 'typo', 'effective_at' => $at, 'recorded_at' => $at,
         'idempotency_key' => 'c4',
     ]);
 
@@ -117,4 +117,24 @@ it('reads the ledger with exactly three queries', function () {
     DB::disableQueryLog();
 
     expect($queries)->toHaveCount(3);
+});
+
+it('loads the time of every restock and correction with its microseconds', function () {
+    $pool = Pool::factory()->create();
+    $dana = User::factory()->supervisor()->create();
+    $allocation = Allocation::factory()->create(['pool_id' => $pool->id, 'seq' => 2, 'requested' => 3, 'granted' => 3]);
+    $restockedAt = '2026-10-17 09:00:00.654321+00';
+    $correctedAt = '2026-10-17 12:30:15.000789+00';
+
+    DB::table('restocks')->insert(['pool_id' => $pool->id, 'seq' => 1, 'amount' => 100, 'recorded_at' => $restockedAt]);
+    DB::table('corrections')->insert([
+        'pool_id' => $pool->id, 'seq' => 3, 'allocation_id' => $allocation->id, 'supervisor_id' => $dana->id,
+        'kind' => 'void', 'from_amount' => 3, 'new_amount' => null, 'reason' => 'dup',
+        'effective_at' => $correctedAt, 'recorded_at' => $correctedAt, 'idempotency_key' => 'c3',
+    ]);
+
+    $ledger = app(LedgerRepository::class)->load($pool);
+
+    expect($ledger->restocks[0]->at->format('Y-m-d\TH:i:s.u'))->toBe('2026-10-17T09:00:00.654321')
+        ->and($ledger->corrections[0]->at->format('Y-m-d\TH:i:s.u'))->toBe('2026-10-17T12:30:15.000789');
 });

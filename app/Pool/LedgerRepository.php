@@ -25,8 +25,8 @@ class LedgerRepository
 
         return new Ledger(
             restocks: DB::table('restocks')->where('pool_id', $poolId)->orderBy('seq')
-                ->get(['id', 'seq', 'amount'])
-                ->map(fn ($row) => new RestockEntry((int) $row->id, (int) $row->seq, (int) $row->amount))
+                ->get(['id', 'seq', 'amount', 'recorded_at'])
+                ->map(fn ($row) => new RestockEntry((int) $row->id, (int) $row->seq, (int) $row->amount, CarbonImmutable::parse($row->recorded_at)))
                 ->all(),
             allocations: DB::table('allocations')->where('pool_id', $poolId)->orderBy('seq')
                 ->get(['id', 'seq', 'operator_id', 'type', 'granted', 'tier_at_log', 'effective_at'])
@@ -42,13 +42,14 @@ class LedgerRepository
                 ))
                 ->all(),
             corrections: DB::table('corrections')->where('pool_id', $poolId)->orderBy('seq')
-                ->get(['id', 'seq', 'allocation_id', 'kind', 'new_amount'])
+                ->get(['id', 'seq', 'allocation_id', 'kind', 'new_amount', 'effective_at'])
                 ->map(fn ($row) => new CorrectionEntry(
                     (int) $row->id,
                     (int) $row->seq,
                     (int) $row->allocation_id,
                     $row->kind,
                     $row->new_amount === null ? null : (int) $row->new_amount,
+                    CarbonImmutable::parse($row->effective_at),
                 ))
                 ->all(),
         );
