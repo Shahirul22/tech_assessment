@@ -5,7 +5,7 @@
 | Slice | M3 |
 | PRD | [prd.md](prd.md) |
 | Plan | [plan.md](plan.md) |
-| Status | Draft |
+| Status | Approved |
 | Date | 2026-10-20 |
 
 ## Conventions
@@ -28,7 +28,7 @@
 
 ## Phase 0 — Setup
 
-### [ ] T001 Confirm the M1/M2 baseline is green and Boost is reachable
+### [x] T001 Confirm the M1/M2 baseline is green and Boost is reachable
 - **Refs:** laravel-boost rules 3–4, AC-US10.2
 - **Depends on:** none
 - **Files:** none (check only)
@@ -36,6 +36,7 @@
 - **Verify:** `APP php artisan test --compact` → all pass (the four M3 todos show as pending); `NODE npm test` → all pass; `APP php artisan test --group=concurrency` → all pass.
 - **Done when:** the baseline numbers are written in the task note, so later regressions are visible.
 - **Out of scope:** any code change.
+- Note: Boost `application-info`: Laravel 13.37.0, Pest 4.7.8, Reverb 1.12.0, PHP 8.4, pgsql, Boost 2.10.3. `.ai/rules` absent. Baseline: PHP 271 passed + 4 todos (1017 assertions); JS 109 pass; concurrency 8 passed (721 assertions).
 
 ---
 
