@@ -152,6 +152,48 @@ Open http://localhost:8080 as Ana, choose Temporary, request 1 and watch the hol
 - **Background browser tabs** throttle timers, so a hidden tab may show an expiry late. It corrects when the tab is shown again or at the next refresh; the 2 s target applies to a visible screen.
 - M2 supersedes two M1 statements: the form now has a type choice (M1 had none), and `viewer.status` and `viewer.holdings` are filled in.
 
+## Corrections and restock (M3)
+
+**Dana, the supervisor, can now add units and fix past requests.** Pick Dana and open the **Supervisor** tab. It has a **Restock** form (a number of units and an optional note), a **Correct or void an entry** form, and the **Audit** view. To correct something, go back to the **Pool** tab and press **Correct** on a log row: the form is filled with the entry number and what it holds now. Choose **Amend** and a new amount, or **Void**, give a reason, and press the button. Nothing is ever edited: every correction is one more log entry next to the original, which stays readable ("Ana: 40 granted · corrected to 20", or "· voided"). The supervisor tab replaces the M1 placeholder, and `PUT /capacity` no longer exists: capacity only goes up, by restock. The new fields and endpoints are in [docs/api-contract.md](docs/api-contract.md) ("M3 (additive)").
+
+**Walkthrough** (reset the data first with `docker compose run --rm app php artisan migrate:fresh --seed`; open Ana and Dana in two windows):
+
+1. As Ana, request 100: remaining is 0.
+2. As Dana, restock 50 with the note "Delivery": both windows show 50 and a "Dana added 50 units · Delivery" row.
+3. As Dana, press **Correct** on Ana's row, **Amend** to 20 with the reason "Counted wrong": both windows show 130. Ana's status goes from high to elevated, and the log shows the correction and Ana's original row marked "corrected to 20".
+4. As Dana, try to raise Ana's entry to 500: refused as text, "Needs 480 more units, 130 are free. Restock first." Nothing was recorded. Restock more and try again: accepted.
+5. As Dana, **Void** the entry with a reason: its units come back and Ana's status is standard.
+6. Open **Audit**: one row per correction (who, which entry, from → to, the reason, and Ana's status before → after at the moment it was corrected and at the later points where it differs). If a raise would have taken the pool below 0 at an earlier time, the audit says "Overdrawn in hindsight: lowest -20 between 10:00 and 13:00". That flag is only a warning about the past: it never blocks anything and never changes today's remaining.
+
+**How a correction is judged.** Lowering or voiding is always accepted. Raising is accepted only if the units that are free right now cover it, and one unit more is refused. A Temporary entry whose window has already ended is history only: correcting it never changes the current remaining and needs no free units. A correction never moves `expires_at`; at expiry exactly the corrected units come back.
+
+**Manual checks for M3** (reset the data first):
+
+| # | Check | How | Expected |
+|---|---|---|---|
+| 11 | Two browsers while the supervisor restocks | Ana in one window, Ben in another, Dana in a third. Dana restocks 50. | Ana's and Ben's windows show remaining +50 and the restock row within 2 s, no reload. |
+| 12 | Lower, refuse, raise, void | Follow steps 3 to 5 of the walkthrough with Ana and Ben watching. | Each window updates within 2 s. Ana's status and holdings follow. The refusal is words on Dana's screen and changes nothing anywhere. Ben's window shows nothing about Ana's status. |
+| 13 | Audit | Open the Audit view after a lowering. | One row with the original, the corrected amount, the reason and the status before → after. With no corrections it says "No corrections yet". |
+| 14 | Narrow and wide layout | As in check 2, on the Supervisor tab and the Pool tab with the new rows. | `scrollWidth <= innerWidth` at 360 px and 1280 px. |
+| 15 | Live service down | `docker compose stop reverb`, then Dana restocks or corrects. | Dana's screen updates from the answer; the other window catches up on the 10 s refresh. |
+| 16 | Offline | Set the network to Offline on Dana's window and fill a restock or a correction. | The button is disabled and says "You are offline — nothing was sent". Going back online sends nothing by itself. |
+
+**Working assumptions for M3** (from the milestone PRD):
+
+- **A-M3.1** A restock is a whole number of units, 1 or more, with no upper limit in the demo.
+- **A-M3.2** The reason of a correction is part of the log entry everyone sees. The audit view and the hindsight flag are for supervisors only.
+- **A-M3.3** Any seeded supervisor may restock or correct; the acting supervisor is recorded.
+- **A-M3.4** Expiry rows follow the corrected units: a void leaves none, a lowered entry shows the lowered units.
+- **A-M3.5** What users see is commit order (`seq`). A write is evaluated at its receipt time but never earlier than the newest entry already stored, whatever its kind, so each reply stays consistent with the ledger.
+
+**Things to know:**
+
+- **A refused correction records nothing**, so sending the same request again is judged afresh: refused again while the pool is unchanged, accepted if a restock arrived in between. A recorded correction or restock is replayed exactly.
+- **"Overdrawn in hindsight" shows the whole stretch below 0.** In the worked example the pool is already -10 after Ben's 10:00 entry and -20 after Cara's at 11:00, so the audit shows 10:00 to 13:00 with the lowest level -20, which contains 11:00 to 13:00.
+- **A voided entry is final.** It cannot be corrected again; other entries can be corrected as often as needed, each judged against what the entry holds now.
+- **Idempotency keys are unique per kind of entry**, and the screen makes a new one for every action.
+- M3 supersedes two earlier statements: the supervisor tab is no longer a placeholder, and the capacity endpoint is gone.
+
 ## Assumptions and accepted trade-offs
 
 Decisions taken for M1 (from the product requirements and the milestone PRD):

@@ -5,9 +5,10 @@
 #
 # Runs five steps in order and stops at the first failure, with one PASS or FAIL line per step:
 #   1. smoke        the stack starts from nothing and serves the seeded pool
-#   2. tests        unit and feature tests (Pest, real PostgreSQL)
+#   2. tests        unit and feature tests (Pest, real PostgreSQL), including the M3 correction, restock and audit tests
 #   3. concurrency  50 parallel requests of 3 against 100, and the other parallel cases, against the running stack
-#   4. js           the browser modules (node --test)
+#                   (the M3 corrections and restocks racing operator requests are in this group)
+#   4. js           the browser modules (node --test), including the M3 supervisor modules
 #   5. live         a POST reaches a websocket subscriber within 2 s, ten times
 #
 # The 2-minute expiry demo (scripts/demo-expiry.sh and tests/Live/expiry-demo.mjs) is not part of this: it needs the

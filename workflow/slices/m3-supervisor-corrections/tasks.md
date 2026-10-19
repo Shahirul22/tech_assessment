@@ -336,7 +336,7 @@
 
 ## Phase 5 — Hardening and docs
 
-### [ ] T029 Update `scripts/verify.sh` and the README
+### [x] T029 Update `scripts/verify.sh` and the README
 - **Refs:** AC-US10.2, AC-US8.1, AC-US9.2
 - **Depends on:** T028, T021
 - **Files:** `scripts/verify.sh` (edit), `README.md` (edit)
@@ -344,8 +344,9 @@
 - **Verify:** `bash scripts/verify.sh` → ends with its success line and each step passes.
 - **Done when:** one command runs everything.
 - **Out of scope:** the final README (M4).
+- Note: Documentation and script task, no Boost query. verify.sh already runs whole suites (php artisan test, --group=concurrency, npm test with a glob), so only its header comment was updated; a run confirms the new files are included (400 PHP tests, 11 concurrency tests incl. ParallelCorrectionTest, 165 JS tests). README: new 'Corrections and restock (M3)' section with the walkthrough, how a correction is judged, manual checks 11-16, assumptions A-M3.1 to A-M3.5 and the things to know; other sections untouched (the M3 section lists what it supersedes).
 
-### [ ] T030 Run the full suite and the manual checks
+### [x] T030 Run the full suite and the manual checks
 - **Refs:** AC-US10.2, AC-US8.1, AC-US8.3, AC-US9.2, AC-US9.4, AC-US2.6, AC-US1.1, NFR3, NFR6
 - **Depends on:** T029
 - **Files:** none (run and record)
@@ -353,8 +354,9 @@
 - **Verify:** `bash scripts/verify.sh` → green; manual results written in the task note.
 - **Done when:** the suite is green and the manual checks are done or explicitly handed to the user.
 - **Out of scope:** fixing M4 work (contrast, touch size).
+- Note: No Boost query (run and record). `bash scripts/verify.sh`: 5 of 5 passed: smoke OK; 400 PHP tests (1678 assertions); concurrency p95 0.736 s for the 52-request mix (restock 0.146 s, correction 0.374 s); 165 JS tests; live 10/10 within 2000 ms (median 39 ms). Manual checks were driven in headless Chromium (Playwright 1.50 from mcr.microsoft.com/playwright, host network) against the rebuilt Compose stack with three pages (Ana, Ben, Dana); they are the real page, websocket and server but not a person on a phone. Results: restock, Ana and Ben updated in 3 ms after Dana's confirmation (limit 2 s); lowering 100→20 gave remaining 130 on both screens in 3-111 ms, Ana high→elevated; refused raise shown as 'Needs 400 more units, 50 are free. Restock first.' with nothing changed; void: remaining 150 in 111 ms, Ana standard, original row 'voided'; audit row '#2 Ana · 100 → 20 · Counted wrong · Ana: high → elevated'; Ben's screen shows nothing about Ana's status; no horizontal scroll at 360 px or 1280 px on the Supervisor and Pool tabs (screenshots in the scratchpad); offline: submit disabled, offline text shown, 0 POSTs, nothing sent on return; reverb stopped: Dana updated from the HTTP answer in 44 ms and Ana caught up on the poll after 9.6 s. One script check failed only because the script expected 450 where 400 was right (500 − 100); the screen text was correct. Not done: a real device, a background tab, a wrong device clock. The demo pool was reset to the fresh seed afterwards.
 
-### [ ] T031 Traceability self-check
+### [x] T031 Traceability self-check
 - **Refs:** plan §10, PRD §10
 - **Depends on:** T030
 - **Files:** `workflow/slices/m3-supervisor-corrections/tasks.md` (edit: tick, notes only)
@@ -362,8 +364,9 @@
 - **Verify:** a script over PRD §10 IDs and this file reports no missing ID; `ls` of the plan §4 test files shows them all.
 - **Done when:** the result is in the task note.
 - **Out of scope:** changing the PRD or plan.
+- Note: Documentation task, no Boost query. Checked mechanically with a script over PRD §10: 34 of 34 requirement IDs and 42 of 42 acceptance criteria of §7 have a non-empty row in the Coverage table; 38 lines of this file mention a Boost query and every Laravel task note (T002-T022, T027) names one; every test file named in plan §4 exists, except CalculatorPendingTest.php, which was removed by design (approved, plan §11).
 
-### [ ] T032 Re-run the rules check and log deviations
+### [x] T032 Re-run the rules check and log deviations
 - **Refs:** laravel-boost rules 1–6, plan §2, plan §12
 - **Depends on:** T031
 - **Files:** `workflow/slices/m3-supervisor-corrections/plan.md` (edit §2 "Re-run" line and §12 only)
@@ -371,6 +374,7 @@
 - **Verify:** plan §2 has a dated "Re-run" paragraph; §12 lists each deviation.
 - **Done when:** the plan matches reality.
 - **Out of scope:** any code change.
+- Note: Documentation task, no Boost query. Plan §2 now has a dated re-run paragraph listing the Boost calls made, skipped or unused; plan §12 has six dated rows (the contract conflict on the correction log entry, added signatures, tests changed additively, capacity 404, the T009 wording slip, the image rebuild).
 
 **Checkpoint 5:** `bash scripts/verify.sh` is green; the README walkthrough and manual checks are done or handed over; the plan's rules check is re-run.
 
