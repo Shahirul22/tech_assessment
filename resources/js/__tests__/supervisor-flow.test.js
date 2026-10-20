@@ -10,6 +10,7 @@ const start = () => initialState({ version: 4, remaining: 0, log: [{ seq: 4, cur
 function harness({ replies = [], online = true } = {}) {
     const actions = [];
     const calls = [];
+    const waits = [];
     let state = start();
     let keyCount = 0;
     const queue = [...replies];
@@ -40,9 +41,11 @@ function harness({ replies = [], online = true } = {}) {
         newKey: () => `key-${++keyCount}`,
         now: () => 0,
         epochNow: () => 0,
+        // A fake clock: every wait between resends ends at once and is recorded.
+        sleep: (ms) => { waits.push(ms); return Promise.resolve(); },
     });
 
-    return { flow, actions, calls, state: () => state, statuses: (channel) => actions.filter((a) => a.type === 'status' && a.channel === channel).map((a) => a.status) };
+    return { flow, actions, calls, waits, state: () => state, statuses: (channel) => actions.filter((a) => a.type === 'status' && a.channel === channel).map((a) => a.status) };
 }
 
 const restockReply = { status: 201, body: { restock: { id: 5, seq: 5, actor: { id: 4, name: 'Dana' }, amount: 50, note: 'Delivery', recorded_at: '2026-10-17T13:00:00.000000Z' }, pool: { version: 5, remaining: 50 } } };
@@ -96,20 +99,23 @@ test('offline, nothing is sent, nothing is queued and the totals are left alone'
     assert.equal(state().remaining, 0);
 });
 
-test('a lost answer is unconfirmed, and Retry sends the same key so the server counts it once', async () => {
-    const { flow, calls, statuses, state } = harness({ replies: [new TypeError('network down'), { ...restockReply, status: 200 }] });
+const lost = () => new TypeError('network down');
+
+test('a lost answer is unconfirmed after the automatic resends, and Retry sends the same key so the server counts it once', async () => {
+    const { flow, calls, statuses, state } = harness({ replies: [lost(), lost(), lost(), lost(), { ...restockReply, status: 200 }] });
 
     await flow.restock('50', 'Delivery');
 
     assert.deepEqual(statuses('restock').at(-1), { state: 'unconfirmed', key: 'key-1' });
+    assert.equal(calls.length, 4);
     assert.equal(state().remaining, 0);
 
     // A new submit would send a new key and could record twice: it is refused until Retry settles the first.
     assert.deepEqual(await flow.restock('50', 'Delivery'), { started: false, reason: 'unconfirmed' });
 
     assert.deepEqual(await flow.retry('restock'), { started: true });
-    assert.equal(calls.length, 2);
-    assert.equal(calls[1].options.headers['Idempotency-Key'], 'key-1');
+    assert.equal(calls.length, 5);
+    assert.equal(calls[4].options.headers['Idempotency-Key'], 'key-1');
     assert.equal(statuses('restock').at(-1).state, 'done');
     assert.equal(statuses('restock').at(-1).replayed, true);
     assert.equal(state().remaining, 50);
@@ -121,6 +127,7 @@ test('Retry while offline stays unconfirmed with the offline message and sends n
     const statuses = [];
     const flow = createSupervisorFlow({
         fetch: async () => { sent += 1; throw new TypeError('down'); },
+        sleep: async () => {},
         userId: 4,
         poolId: 1,
         getState: () => start(),
@@ -133,7 +140,7 @@ test('Retry while offline stays unconfirmed with the offline message and sends n
     online = false;
 
     assert.deepEqual(await flow.retry('restock'), { started: false, reason: 'offline' });
-    assert.equal(sent, 1);
+    assert.equal(sent, 4);
     assert.deepEqual(statuses.at(-1), { state: 'unconfirmed', key: 'k', message: OFFLINE_MESSAGE });
 });
 
@@ -182,26 +189,25 @@ test('a refused raise shows the units needed and free, changes nothing and frees
 test('other refusals are shown in words', async () => {
     const noChange = { status: 422, body: { error: { code: 'validation_failed', message: 'The given data was invalid.', details: { fields: { amount: ['no_change'] } } } } };
     const voided = { status: 422, body: { error: { code: 'allocation_voided', message: 'Entry #2 was voided and cannot be corrected again.', details: { allocation_seq: 2 } } } };
-    const busy = { status: 503, body: { error: { code: 'pool_busy', message: 'The pool is busy. Try again.', details: {} } } };
-    const { flow, statuses } = harness({ replies: [noChange, voided, busy] });
+    const { flow, statuses } = harness({ replies: [noChange, voided] });
     const form = { allocationSeq: 2, kind: 'amend', amountText: '20', reasonText: 'x', currentUnits: 40 };
 
-    await flow.correct(form);
     await flow.correct(form);
     await flow.correct(form);
 
     assert.deepEqual(statuses('correction').filter((s) => s.state === 'error').map((s) => [s.code, s.message]), [
         ['no_change', 'No change'],
         ['allocation_voided', 'Entry #2 was voided and cannot be corrected again.'],
-        ['pool_busy', 'The pool is busy. Try again.'],
     ]);
 });
 
 test('an unexpected server failure is unconfirmed, since the entry may have been stored', async () => {
-    const { flow, statuses } = harness({ replies: [{ status: 500, body: { error: { code: 'server_error' } } }] });
+    const failed = { status: 500, body: { error: { code: 'server_error' } } };
+    const { flow, calls, statuses } = harness({ replies: [failed, failed, failed, failed] });
 
     await flow.restock('5');
 
+    assert.equal(calls.length, 4, 'resent with the same key before giving up');
     assert.deepEqual(statuses('restock').at(-1), { state: 'unconfirmed', key: 'key-1' });
 });
 
@@ -225,4 +231,117 @@ test('the two channels do not block each other', async () => {
     ]);
 
     assert.equal(calls.length, 2);
+});
+
+// M4: the same automatic-then-manual rules as an operator request (FR21.7).
+
+test('a lost restock answer is resent automatically with the same key and then settles once', async () => {
+    const { flow, calls, waits, statuses, state } = harness({ replies: [lost(), lost(), { ...restockReply, status: 200 }] });
+
+    await flow.restock('50', 'Delivery');
+
+    assert.equal(calls.length, 3);
+    assert.deepEqual(waits, [1000, 2000]);
+    assert.deepEqual([...new Set(calls.map((call) => call.options.headers['Idempotency-Key']))], ['key-1']);
+    assert.deepEqual(statuses('restock').map((status) => status.state), ['pending', 'resending', 'resending', 'resending', 'resending', 'done']);
+    assert.deepEqual(statuses('restock')[1], { state: 'resending', key: 'key-1', attempt: 1, of: 3, phase: 'waiting' });
+    assert.equal(state().remaining, 50);
+});
+
+test('a correction gives up after three resends and offers Retry', async () => {
+    const { flow, calls, waits, statuses, state } = harness({ replies: [lost(), lost(), lost(), lost(), correctionReply(200)] });
+    const form = { allocationSeq: 2, kind: 'amend', amountText: '20', reasonText: 'Counted wrong', currentUnits: 40 };
+
+    await flow.correct(form);
+
+    assert.equal(calls.length, 4);
+    assert.deepEqual(waits, [1000, 2000, 4000]);
+    assert.deepEqual(statuses('correction').at(-1), { state: 'unconfirmed', key: 'key-1' });
+    assert.equal(state().version, 4, 'no total moved');
+
+    assert.deepEqual(await flow.retry('correction'), { started: true });
+    assert.equal(statuses('correction').find((status) => status.state === 'retrying').key, 'key-1');
+    assert.equal(calls[4].options.headers['Idempotency-Key'], 'key-1');
+    assert.equal(statuses('correction').at(-1).state, 'done');
+});
+
+test('a refused correction is never resent', async () => {
+    const refusal = { status: 422, body: { error: { code: 'insufficient_free_units', message: 'x', details: { needed: 20, free: 0, allocation_seq: 2 } } } };
+    const { flow, calls, waits, statuses } = harness({ replies: [refusal] });
+
+    await flow.correct({ allocationSeq: 2, kind: 'amend', amountText: '60', reasonText: 'Miscounted', currentUnits: 40 });
+
+    assert.equal(calls.length, 1);
+    assert.deepEqual(waits, []);
+    assert.equal(statuses('correction').at(-1).state, 'refused');
+});
+
+test('503 pool_busy is resent automatically', async () => {
+    const busy = { status: 503, body: { error: { code: 'pool_busy', message: 'The pool is busy. Try again.', details: {} } } };
+    const { flow, calls, statuses } = harness({ replies: [busy, restockReply] });
+
+    await flow.restock('50');
+
+    assert.equal(calls.length, 2);
+    assert.equal(calls[1].options.headers['Idempotency-Key'], 'key-1');
+    assert.equal(statuses('restock').at(-1).state, 'done');
+});
+
+test('the two channels resend independently', async () => {
+    // One channel waits for its next resend (the clock never ends) while the other is answered at once.
+    const answers = [];
+    const calls = [];
+    const statuses = [];
+    const flow = createSupervisorFlow({
+        fetch: async (url, options) => {
+            calls.push({ url, key: options.headers['Idempotency-Key'] });
+
+            if (url.endsWith('/restocks')) {
+                throw new TypeError('down');
+            }
+
+            return { status: 201, json: async () => correctionReply().body };
+        },
+        sleep: () => new Promise(() => {}),
+        userId: 4,
+        poolId: 1,
+        getState: () => start(),
+        dispatch: (action) => { answers.push(action); if (action.type === 'status') { statuses.push(action); } },
+        isOnline: () => true,
+        newKey: () => `key-${calls.length + 1}`,
+    });
+
+    const restock = flow.restock('5');
+    const correction = flow.correct({ allocationSeq: 2, kind: 'amend', amountText: '20', reasonText: 'x', currentUnits: 40 });
+    await correction;
+
+    assert.equal(statuses.filter((a) => a.channel === 'correction').at(-1).status.state, 'done');
+    assert.equal(statuses.filter((a) => a.channel === 'restock').at(-1).status.state, 'resending', 'the restock still waits to resend');
+
+    flow.dispose();
+    await restock;
+    assert.equal(calls.filter((call) => call.url.endsWith('/restocks')).length, 1, 'dispose stopped the waiting resend');
+});
+
+test('going offline during the wait stops a restock as not confirmed', async () => {
+    let online = true;
+    const statuses = [];
+    const flow = createSupervisorFlow({
+        fetch: async () => { throw new TypeError('down'); },
+        sleep: () => new Promise(() => {}),
+        userId: 4,
+        poolId: 1,
+        getState: () => start(),
+        dispatch: (action) => statuses.push(action.status),
+        isOnline: () => online,
+        newKey: () => 'k',
+    });
+
+    const restock = flow.restock('5');
+    await new Promise((resolve) => setImmediate(resolve));
+    online = false;
+    flow.goOffline();
+    await restock;
+
+    assert.deepEqual(statuses.at(-1), { state: 'unconfirmed', key: 'k', message: OFFLINE_MESSAGE });
 });

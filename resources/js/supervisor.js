@@ -1,7 +1,8 @@
 // The supervisor's screen: restock, correct or void, and the audit view (M3, FR10, FR6, FR18, FR18.1).
 //
 // Two parts, like the rest of the client:
-//   createSupervisorFlow  the write flow: validate, show "pending", send once with a fresh key, apply the answer.
+//   createSupervisorFlow  the write flow: validate, show "pending", send with a fresh key (resending a lost answer with the
+//                         same key, retry-policy.js), apply the answer.
 //                         It takes `fetch`, the clocks and the key generator as arguments, so it is tested without a
 //                         browser. It never guesses a total: the numbers move only when the server has answered.
 //   supervisorPart        the pieces of Alpine state and methods that dashboard.js merges into poolDashboard().
@@ -9,7 +10,12 @@
 import { OFFLINE_MESSAGE, fetchAudit, postCorrection, postRestock, randomKey } from './api.js';
 import { auditView, EMPTY_AUDIT_TEXT } from './audit-view.js';
 import { applyOwnCorrection, applyOwnRestock } from './pool-state.js';
+import { bannerFor, withTone } from './banner-model.js';
+import { createRetryRunner } from './retry-policy.js';
 import { correctionProblem, restockProblem } from './supervisor-rules.js';
+
+/** A request is on its way: the first send, an automatic resend, or a manual Retry. */
+const PENDING_STATES = ['pending', 'resending', 'retrying'];
 
 /**
  * The words for a refused correction, from the server's details (FR6.2, AC-US9.3).
@@ -39,52 +45,89 @@ export function refusalText({ needed, free }) {
  * @param {() => number} [options.now]  the same clock the caller uses for checkGap (performance.now)
  * @param {() => number} [options.epochNow]  the epoch clock (Date.now)
  */
-export function createSupervisorFlow({ fetch, userId, poolId, getState, dispatch, isOnline, newKey = randomKey, now = () => performance.now(), epochNow = () => Date.now() }) {
+export function createSupervisorFlow({ fetch, userId, poolId, getState, dispatch, isOnline, newKey = randomKey, now = () => performance.now(), epochNow = () => Date.now(), sleep, waitsMs }) {
     const channels = {
         restock: { attempt: null, inFlight: false },
         correction: { attempt: null, inFlight: false },
     };
+    // After dispose() nothing more is dispatched: the viewer changed.
+    let disposed = false;
 
-    const status = (channel, value) => dispatch({ type: 'status', channel, status: value });
+    const status = (channel, value) => {
+        if (!disposed) {
+            dispatch({ type: 'status', channel, status: value });
+        }
+    };
 
-    async function send(channel) {
-        const slot = channels[channel];
-        const { attempt } = slot;
+    // One runner per channel, so a restock and a correction resend independently.
+    const runners = Object.fromEntries(Object.keys(channels).map((channel) => [channel, createRetryRunner({
+        waitsMs,
+        isOnline,
+        sleep,
+        onResending: ({ attempt: number, of, phase }) => status(channel, { state: 'resending', key: channels[channel].attempt.key, attempt: number, of, phase }),
+    })]));
 
-        slot.inFlight = true;
-        // Synchronously, before the request is made: the screen shows it, and the numbers have not moved.
-        status(channel, { state: 'pending', key: attempt.key });
-
+    /**
+     * One call with the attempt's key. Resolves, never rejects: a definite answer, or no answer.
+     * Offline it sends nothing, which counts as no answer; the runner then stops because the browser is offline.
+     */
+    async function sendOnce(channel) {
+        const { attempt } = channels[channel];
         let reply;
 
         try {
             reply = await attempt.call({ fetch, userId, poolId, key: attempt.key, isOnline });
         } catch {
-            // No answer: the request may or may not have arrived. Keep the key so Retry is safe.
-            slot.inFlight = false;
-
-            return status(channel, { state: 'unconfirmed', key: attempt.key });
+            // No answer: the request may or may not have arrived. The same key makes a resend safe.
+            return { kind: 'no-answer' };
         }
 
         if (reply.offline) {
-            slot.inFlight = false;
+            return { kind: 'no-answer' };
+        }
 
+        if (reply.status === 200 || reply.status === 201) {
+            return reply.body ? { kind: 'answered', value: reply } : { kind: 'no-answer' };
+        }
+
+        // A server failure (including 503 pool_busy) does not say whether the entry was stored: resend with the same key.
+        return reply.status >= 500 ? { kind: 'no-answer' } : { kind: 'answered', value: reply };
+    }
+
+    /**
+     * @param {'pending'|'retrying'} firstState  what the screen says while the first send of this round is out
+     */
+    async function send(channel, firstState) {
+        const slot = channels[channel];
+        const { attempt } = slot;
+
+        slot.inFlight = true;
+        // Synchronously, before the request is made: the screen shows it, and the numbers have not moved.
+        status(channel, { state: firstState, key: attempt.key });
+
+        const round = await runners[channel].run(() => sendOnce(channel));
+
+        slot.inFlight = false;
+
+        if (disposed) {
+            return;
+        }
+
+        if (round.outcome === 'gave-up') {
+            return status(channel, { state: 'unconfirmed', key: attempt.key });
+        }
+
+        if (round.outcome === 'stopped-offline') {
             return status(channel, { state: 'unconfirmed', key: attempt.key, message: OFFLINE_MESSAGE });
         }
+
+        const reply = round.value;
 
         if (reply.status === 200 || reply.status === 201) {
             return confirmed(channel, reply.body, reply.status === 200);
         }
 
-        // An unexpected server failure does not say whether the entry was stored. Retrying with the same key is safe.
-        if (reply.status >= 500 && reply.status !== 503) {
-            slot.inFlight = false;
-
-            return status(channel, { state: 'unconfirmed', key: attempt.key });
-        }
-
         slot.attempt = null;
-        slot.inFlight = false;
         status(channel, failure(reply));
     }
 
@@ -125,7 +168,7 @@ export function createSupervisorFlow({ fetch, userId, poolId, getState, dispatch
         }
 
         slot.attempt = { key: newKey(), call };
-        await send(channel);
+        await send(channel, 'pending');
 
         return { started: true };
     }
@@ -176,9 +219,20 @@ export function createSupervisorFlow({ fetch, userId, poolId, getState, dispatch
                 return { started: false, reason: 'offline' };
             }
 
-            await send(channel);
+            await send(channel, 'retrying');
 
             return { started: true };
+        },
+
+        /** The browser went offline: cut any waiting resend short; each round then stops as "not confirmed". */
+        goOffline() {
+            Object.values(runners).forEach((runner) => runner.abortWait());
+        },
+
+        /** The viewer changed: stop resending and drop anything this flow would still dispatch. */
+        dispose() {
+            disposed = true;
+            Object.values(runners).forEach((runner) => runner.dispose());
         },
     };
 }
@@ -242,6 +296,8 @@ export function supervisorPart() {
 
         /** A fresh flow for the current viewer; a supervisor gets one, an operator none. */
         newSupervisorFlow() {
+            // Stop the old viewer's resends and drop a late answer, so it cannot reach the new viewer's screen.
+            flow?.dispose();
             this.restockAmount = '';
             this.restockNote = '';
             this.restockStatus = { state: 'idle' };
@@ -291,6 +347,11 @@ export function supervisorPart() {
             if (action.status.state === 'done' && !action.status.replayed) {
                 this.loadAudit();
             }
+        },
+
+        /** The browser went offline: waiting resends stop and show as not confirmed. */
+        supervisorGoOffline() {
+            flow?.goOffline();
         },
 
         submitRestock() {
@@ -386,7 +447,7 @@ export function supervisorPart() {
         },
 
         get isRestockPending() {
-            return this.restockStatus.state === 'pending';
+            return PENDING_STATES.includes(this.restockStatus.state);
         },
 
         get isRestockUnconfirmed() {
@@ -402,7 +463,10 @@ export function supervisorPart() {
         },
 
         get restockBanner() {
-            return banner(this.restockStatus, (status) => `Added ${status.result.restock.amount} units. Remaining: ${status.result.pool.remaining}`);
+            return withTone(bannerFor(this.restockStatus, {
+                channel: 'restock',
+                doneText: (status) => `Added ${status.result.restock.amount} units. Remaining: ${status.result.pool.remaining}`,
+            }));
         },
 
         // Correction form state.
@@ -439,7 +503,7 @@ export function supervisorPart() {
         },
 
         get isCorrectionPending() {
-            return this.correctionStatus.state === 'pending';
+            return PENDING_STATES.includes(this.correctionStatus.state);
         },
 
         get isCorrectionUnconfirmed() {
@@ -463,40 +527,16 @@ export function supervisorPart() {
         },
 
         get correctionBanner() {
-            return banner(this.correctionStatus, (status) => {
-                const { correction, pool } = status.result;
+            return withTone(bannerFor(this.correctionStatus, {
+                channel: 'correction',
+                doneText: (status) => {
+                    const { correction, pool } = status.result;
 
-                return correction.kind === 'void'
-                    ? `Voided entry #${correction.allocation_seq} (${correction.from} → 0). Remaining: ${pool.remaining}`
-                    : `Entry #${correction.allocation_seq} changed ${correction.from} → ${correction.to}. Remaining: ${pool.remaining}`;
-            });
+                    return correction.kind === 'void'
+                        ? `Voided entry #${correction.allocation_seq} (${correction.from} → 0). Remaining: ${pool.remaining}`
+                        : `Entry #${correction.allocation_seq} changed ${correction.from} → ${correction.to}. Remaining: ${pool.remaining}`;
+                },
+            }));
         },
     };
-}
-
-/**
- * The full-width result under a form, in words (colour is never the only sign).
- */
-function banner(status, doneText) {
-    if (status.state === 'done') {
-        return { tone: 'success', text: doneText(status) };
-    }
-
-    if (status.state === 'refused' || status.state === 'error') {
-        return { tone: 'warning', text: status.message };
-    }
-
-    if (status.state === 'offline') {
-        return { tone: 'warning', text: status.message };
-    }
-
-    if (status.state === 'unconfirmed') {
-        return { tone: 'warning', text: 'Not confirmed — ', message: status.message ?? '' };
-    }
-
-    if (status.state === 'pending') {
-        return { tone: 'success', text: 'Sending…' };
-    }
-
-    return null;
 }

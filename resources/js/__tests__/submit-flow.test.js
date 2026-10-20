@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, test, mock } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { createSubmitFlow, doneText, fetchLog, fetchSnapshot, randomKey } from '../api.js';
+import { SUBMIT_TIMEOUT_MS, createSubmitFlow, doneText, fetchLog, fetchSnapshot, randomKey } from '../api.js';
 import { GAP_MS, checkGap, initialState } from '../pool-state.js';
 
 beforeEach(() => {
@@ -41,13 +41,14 @@ function controllableFetch() {
     return { fetch, calls };
 }
 
-function harness({ online = true, remaining = 10, keys = ['key-1', 'key-2', 'key-3'], getType = undefined } = {}) {
+function harness({ online = true, remaining = 10, keys = ['key-1', 'key-2', 'key-3'], getType = undefined, sleep = undefined } = {}) {
     let state = initialState({ version: 10, remaining, log: [], log_has_more: false });
     const actions = [];
     const order = [];
     const { fetch, calls } = controllableFetch();
     let onlineNow = online;
     let nextKey = 0;
+    const waits = [];
 
     const flow = createSubmitFlow({
         fetch: (...args) => { order.push('fetch'); return fetch(...args); },
@@ -65,10 +66,12 @@ function harness({ online = true, remaining = 10, keys = ['key-1', 'key-2', 'key
         isOnline: () => onlineNow,
         newKey: () => keys[nextKey++],
         now: () => 0,
+        // A fake clock: every wait between resends ends at once and is recorded, unless the test brings its own.
+        sleep: sleep ?? ((ms) => { waits.push(ms); return Promise.resolve(); }),
     });
 
     return {
-        flow, calls, actions, order,
+        flow, calls, actions, order, waits,
         state: () => state,
         statuses: () => actions.filter((a) => a.type === 'status').map((a) => a.status),
         lastStatus: () => actions.filter((a) => a.type === 'status').at(-1)?.status,
@@ -77,6 +80,20 @@ function harness({ online = true, remaining = 10, keys = ['key-1', 'key-2', 'key
 }
 
 const flush = () => new Promise((resolve) => setImmediate(resolve));
+
+/** Answers the next `count` sends one by one with `answer(call)`, letting the flow's automatic resend happen in between. */
+async function settleSends(h, count, answer) {
+    for (let index = 0; index < count; index++) {
+        while (h.calls.length <= index) {
+            await flush();
+        }
+
+        answer(h.calls[index]);
+        await flush();
+    }
+}
+
+const loseSends = (h, count = 4) => settleSends(h, count, (call) => call.reject(new TypeError('fetch failed')));
 
 test('shows pending before the request is sent, and leaves the totals alone until the server answers', async () => {
     const h = harness();
@@ -141,7 +158,7 @@ test('treats a replayed 200 as done too', async () => {
 });
 
 test('a refusal from the server is a definitive error, with the totals untouched', async () => {
-    for (const [status, code] of [[409, 'idempotency_key_conflict'], [422, 'validation_failed'], [403, 'forbidden_role'], [503, 'pool_busy'], [401, 'unknown_user'], [404, 'not_found']]) {
+    for (const [status, code] of [[409, 'idempotency_key_conflict'], [422, 'validation_failed'], [403, 'forbidden_role'], [401, 'unknown_user'], [404, 'not_found']]) {
         const h = harness();
         const done = h.flow.submit('4');
         h.calls[0].resolve(jsonResponse(status, { error: { code, message: `m-${code}`, details: {} } }));
@@ -165,23 +182,24 @@ test('a definitive error frees the form: the next submit is a new attempt with a
     await second;
 });
 
-test('a lost response is "unconfirmed": totals stay, the key is kept, and Retry sends the same key and shows the original result', async () => {
+test('a lost response is "unconfirmed" only after the automatic resends: totals stay, the key is kept, and Retry sends the same key and shows the original result', async () => {
     const h = harness();
     const first = h.flow.submit('4');
-    h.calls[0].reject(new TypeError('fetch failed'));
+    await loseSends(h);
     await first;
 
     assert.deepEqual(h.lastStatus(), { state: 'unconfirmed', amount: 4, key: 'key-1' });
     assert.equal(h.state().remaining, 10, 'no total is guessed');
+    assert.equal(h.calls.length, 4);
 
     const retry = h.flow.retry();
-    assert.deepEqual(h.lastStatus(), { state: 'pending', amount: 4, key: 'key-1' });
-    assert.equal(h.calls.length, 2);
-    assert.equal(h.calls[1].options.headers['Idempotency-Key'], 'key-1', 'the same key');
-    assert.deepEqual(JSON.parse(h.calls[1].options.body), { requested: 4, type: 'consumed' });
+    assert.deepEqual(h.lastStatus(), { state: 'retrying', amount: 4, key: 'key-1' });
+    assert.equal(h.calls.length, 5);
+    assert.equal(h.calls[4].options.headers['Idempotency-Key'], 'key-1', 'the same key');
+    assert.deepEqual(JSON.parse(h.calls[4].options.body), { requested: 4, type: 'consumed' });
 
     // The server had it already and answers with the stored result.
-    h.calls[1].resolve(jsonResponse(200, allocationResult(11, 4, 4, 6)));
+    h.calls[4].resolve(jsonResponse(200, allocationResult(11, 4, 4, 6)));
     await retry;
 
     assert.equal(h.lastStatus().state, 'done');
@@ -189,26 +207,42 @@ test('a lost response is "unconfirmed": totals stay, the key is kept, and Retry 
     assert.equal(h.state().remaining, 6);
 });
 
-test('a request that takes longer than 8 seconds becomes unconfirmed', async () => {
+test('a send that takes longer than 3 seconds is no answer, and is resent', async () => {
     const h = harness();
     const done = h.flow.submit('4');
 
-    mock.timers.tick(7_999);
+    mock.timers.tick(2_999);
     await flush();
     assert.equal(h.lastStatus().state, 'pending');
+    assert.equal(h.calls.length, 1);
 
     mock.timers.tick(1);
+    await flush();
+    assert.deepEqual(h.lastStatus(), { state: 'resending', amount: 4, key: 'key-1', attempt: 1, of: 3, phase: 'sending' });
+    assert.equal(h.calls.length, 2);
+
+    // Every resend times out too: four sends in all, then Not confirmed.
+    for (let index = 0; index < 3; index++) {
+        mock.timers.tick(3_000);
+        await flush();
+    }
+
     await done;
 
     assert.deepEqual(h.lastStatus(), { state: 'unconfirmed', amount: 4, key: 'key-1' });
+    assert.equal(h.calls.length, 4);
     assert.equal(h.state().remaining, 10);
 });
 
-test('an unexpected server error is unconfirmed too, since the entry may have been stored', async () => {
+test('timeout is 3 seconds', () => {
+    assert.equal(SUBMIT_TIMEOUT_MS, 3000);
+});
+
+test('an unexpected server error is unconfirmed too once the resends fail, since the entry may have been stored', async () => {
     for (const status of [500, 502, 504]) {
         const h = harness();
         const done = h.flow.submit('4');
-        h.calls[0].resolve(jsonResponse(status, {}));
+        await settleSends(h, 4, (call) => call.resolve(jsonResponse(status, {})));
         await done;
 
         assert.equal(h.lastStatus().state, 'unconfirmed', String(status));
@@ -219,7 +253,7 @@ test('an unexpected server error is unconfirmed too, since the entry may have be
 test('a 2xx whose body cannot be read is unconfirmed, not a crash', async () => {
     const h = harness();
     const done = h.flow.submit('4');
-    h.calls[0].resolve({ ok: true, status: 201, json: async () => { throw new SyntaxError('bad json'); } });
+    await settleSends(h, 4, (call) => call.resolve({ ok: true, status: 201, json: async () => { throw new SyntaxError('bad json'); } }));
     await done;
 
     assert.equal(h.lastStatus().state, 'unconfirmed');
@@ -283,31 +317,31 @@ test('a second tap while a request is pending is ignored', async () => {
 test('while a result is unconfirmed, a new submit is refused until Retry settles it', async () => {
     const h = harness();
     const first = h.flow.submit('4');
-    h.calls[0].reject(new TypeError('fetch failed'));
+    await loseSends(h);
     await first;
 
     const other = await h.flow.submit('2');
 
     assert.deepEqual(other, { started: false, reason: 'unconfirmed' });
-    assert.equal(h.calls.length, 1, 'no second key was spent on a possibly stored request');
+    assert.equal(h.calls.length, 4, 'no second key was spent on a possibly stored request');
 });
 
 test('Retry while offline sends nothing and keeps the attempt for later', async () => {
     const h = harness();
     const first = h.flow.submit('4');
-    h.calls[0].reject(new TypeError('fetch failed'));
+    await loseSends(h);
     await first;
 
     h.setOnline(false);
     await h.flow.retry();
 
     assert.deepEqual(h.lastStatus(), { state: 'unconfirmed', amount: 4, key: 'key-1', message: 'You are offline — nothing was sent' });
-    assert.equal(h.calls.length, 1);
+    assert.equal(h.calls.length, 4);
 
     h.setOnline(true);
     const retry = h.flow.retry();
-    assert.equal(h.calls[1].options.headers['Idempotency-Key'], 'key-1');
-    h.calls[1].resolve(jsonResponse(200, allocationResult(11, 4, 4, 6)));
+    assert.equal(h.calls[4].options.headers['Idempotency-Key'], 'key-1');
+    h.calls[4].resolve(jsonResponse(200, allocationResult(11, 4, 4, 6)));
     await retry;
     assert.equal(h.lastStatus().state, 'done');
 });
@@ -408,16 +442,17 @@ test('a retry resends the same type and the same key, even if the choice changed
     const h = harness({ getType: () => type });
 
     const first = h.flow.submit('4');
-    h.calls[0].reject(new Error('network'));
+    await loseSends(h);
     await first;
 
     type = 'consumed';
     const retried = h.flow.retry();
 
-    assert.equal(h.calls[1].options.headers['Idempotency-Key'], 'key-1');
-    assert.deepEqual(JSON.parse(h.calls[1].options.body), { requested: 4, type: 'temporary' });
+    assert.equal(h.calls[4].options.headers['Idempotency-Key'], 'key-1');
+    assert.deepEqual(JSON.parse(h.calls[4].options.body), { requested: 4, type: 'temporary' });
+    assert.ok(h.calls.every((call) => JSON.parse(call.options.body).type === 'temporary'), 'every resend keeps the type');
 
-    h.calls[1].resolve(jsonResponse(200, temporaryResult(11, 4, 4, 6, '2026-10-20T10:00:00.000000Z')));
+    h.calls[4].resolve(jsonResponse(200, temporaryResult(11, 4, 4, 6, '2026-10-20T10:00:00.000000Z')));
     await retried;
 });
 
@@ -443,4 +478,184 @@ test('the banner says when temporary units return, in full, partial, zero and co
     assert.equal(doneText({ requested: 3, granted: 0, expiresAt: null }, serverNow, 'UTC'), 'None granted — 0 of 3, none left');
     assert.equal(doneText({ requested: 4, granted: 4, expiresAt: null }, serverNow, 'UTC'), '4 granted');
     assert.equal(doneText({ requested: 6, granted: 4 }, serverNow, 'UTC'), '4 of 6 granted');
+});
+
+// M4: automatic resend (FR21.3, FR21.5, FR21.6, NFR5).
+
+test('a lost answer is resent automatically with the same key up to 3 times', async () => {
+    const h = harness();
+    const done = h.flow.submit('4');
+
+    await loseSends(h, 2);
+    assert.deepEqual(h.lastStatus(), { state: 'resending', amount: 4, key: 'key-1', attempt: 2, of: 3, phase: 'sending' });
+
+    // The third send is the second resend; the answer arrives now.
+    h.calls[2].resolve(jsonResponse(200, allocationResult(11, 4, 4, 6)));
+    await done;
+
+    assert.equal(h.calls.length, 3);
+    assert.deepEqual(h.waits, [1000, 2000]);
+    assert.deepEqual([...new Set(h.calls.map((call) => call.options.headers['Idempotency-Key']))], ['key-1']);
+    assert.equal(h.lastStatus().state, 'done');
+    assert.equal(h.lastStatus().replayed, true);
+    assert.equal(h.state().remaining, 6);
+});
+
+test('after three failed resends the screen says Not confirmed and Retry starts a fresh round with the same key', async () => {
+    const h = harness();
+    const done = h.flow.submit('4');
+    await loseSends(h);
+    await done;
+
+    assert.equal(h.calls.length, 4);
+    assert.deepEqual(h.waits, [1000, 2000, 4000]);
+    assert.deepEqual(h.statuses().map((status) => status.state), ['pending', 'resending', 'resending', 'resending', 'resending', 'resending', 'resending', 'unconfirmed']);
+    assert.deepEqual(h.lastStatus(), { state: 'unconfirmed', amount: 4, key: 'key-1' });
+    assert.equal(h.state().remaining, 10);
+
+    // Nothing is sent by itself any more.
+    await flush();
+    assert.equal(h.calls.length, 4);
+
+    // A fresh round: the same key, and again up to three resends if the answer is lost again.
+    const retry = h.flow.retry();
+    assert.equal(h.lastStatus().state, 'retrying');
+    await loseSends(h, 8);
+    await retry;
+
+    assert.equal(h.calls.length, 8);
+    assert.equal(h.lastStatus().state, 'unconfirmed');
+    assert.deepEqual([...new Set(h.calls.map((call) => call.options.headers['Idempotency-Key']))], ['key-1']);
+});
+
+test('a 4xx, 409 or 422 is never resent', async () => {
+    for (const status of [400, 403, 404, 409, 422]) {
+        const h = harness();
+        const done = h.flow.submit('4');
+        h.calls[0].resolve(jsonResponse(status, { error: { code: 'x', message: 'no', details: {} } }));
+        await done;
+        await flush();
+
+        assert.equal(h.calls.length, 1, `${status} was sent once`);
+        assert.equal(h.lastStatus().state, 'error', String(status));
+        assert.deepEqual(h.waits, []);
+    }
+});
+
+test('503 pool_busy is resent automatically', async () => {
+    const h = harness();
+    const done = h.flow.submit('4');
+
+    h.calls[0].resolve(jsonResponse(503, { error: { code: 'pool_busy', message: 'busy', details: {} } }));
+    await flush();
+
+    assert.equal(h.calls.length, 2, 'resent with no further input');
+    assert.equal(h.calls[1].options.headers['Idempotency-Key'], 'key-1');
+
+    h.calls[1].resolve(jsonResponse(201, allocationResult(11, 4, 4, 6)));
+    await done;
+
+    assert.equal(h.lastStatus().state, 'done');
+    assert.equal(h.state().remaining, 6);
+});
+
+test('going offline during the wait stops resending and shows Not confirmed', async () => {
+    // A wait that only ends when the flow is told the device went offline.
+    const h = harness({ sleep: () => new Promise(() => {}) });
+    const done = h.flow.submit('4');
+
+    await loseSends(h, 1);
+    assert.equal(h.lastStatus().state, 'resending');
+    assert.equal(h.lastStatus().phase, 'waiting');
+
+    h.setOnline(false);
+    h.flow.goOffline();
+    await done;
+
+    assert.deepEqual(h.lastStatus(), { state: 'unconfirmed', amount: 4, key: 'key-1', message: 'You are offline — nothing was sent' });
+    assert.equal(h.calls.length, 1, 'no resend happened');
+
+    // Back online: nothing is sent by itself; Retry reuses the key.
+    h.setOnline(true);
+    await flush();
+    assert.equal(h.calls.length, 1);
+    const retry = h.flow.retry();
+    assert.equal(h.calls[1].options.headers['Idempotency-Key'], 'key-1');
+    h.calls[1].resolve(jsonResponse(200, allocationResult(11, 4, 4, 6)));
+    await retry;
+    assert.equal(h.lastStatus().state, 'done');
+});
+
+test('dispose drops a late answer and stops resending', async () => {
+    const h = harness({ sleep: () => new Promise(() => {}) });
+    const first = h.flow.submit('4');
+    const seen = h.actions.length;
+
+    h.flow.dispose();
+    h.calls[0].resolve(jsonResponse(201, allocationResult(11, 4, 4, 6)));
+    await first;
+    await flush();
+
+    assert.equal(h.actions.length, seen, 'nothing is dispatched after dispose');
+    assert.equal(h.state().remaining, 10, 'the late answer did not reach the screen state');
+
+    // A round waiting for its next resend is stopped too.
+    const second = harness({ sleep: () => new Promise(() => {}) });
+    const waiting = second.flow.submit('4');
+    await loseSends(second, 1);
+    second.flow.dispose();
+    await waiting;
+    await flush();
+
+    assert.equal(second.calls.length, 1, 'no resend after dispose');
+});
+
+test('ten offline toggles and taps on Retry use one key', async () => {
+    const h = harness({ sleep: () => new Promise(() => {}), keys: ['key-1', 'key-2', 'key-3'] });
+    const first = h.flow.submit('4');
+
+    for (let toggle = 0; toggle < 10; toggle++) {
+        h.setOnline(toggle % 2 === 1);
+        h.flow.goOffline();
+        await flush();
+    }
+
+    // The first send is still out: every Retry or submit is refused, and no new key is spent.
+    assert.deepEqual(await h.flow.retry(), { started: false, reason: 'pending' });
+    assert.deepEqual(await h.flow.submit('4'), { started: false, reason: 'pending' });
+
+    h.setOnline(true);
+    await loseSends(h, 1);
+    h.setOnline(false);
+    h.flow.goOffline();
+    await first;
+
+    for (let tap = 0; tap < 3; tap++) {
+        await h.flow.retry();
+    }
+
+    h.setOnline(true);
+    const retry = h.flow.retry();
+    h.calls.at(-1).resolve(jsonResponse(200, allocationResult(11, 4, 4, 6)));
+    await retry;
+
+    assert.deepEqual([...new Set(h.calls.map((call) => call.options.headers['Idempotency-Key']))], ['key-1']);
+    assert.equal(h.lastStatus().state, 'done');
+});
+
+test('pool numbers do not change while resending', async () => {
+    const h = harness();
+    const done = h.flow.submit('4');
+
+    await loseSends(h, 3);
+
+    assert.equal(h.lastStatus().state, 'resending');
+    assert.equal(h.state().remaining, 10);
+    assert.equal(h.state().version, 10);
+    assert.equal(h.actions.some((action) => action.type === 'state'), false);
+
+    h.calls[3].resolve(jsonResponse(201, allocationResult(11, 4, 4, 6)));
+    await done;
+
+    assert.equal(h.state().remaining, 6);
 });

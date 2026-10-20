@@ -98,7 +98,7 @@
 
 ## Phase 2 — Reliable sending (US4, US5, P1)
 
-### [ ] T007 [US4] Put the submit flow on the retry runner
+### [x] T007 [US4] Put the submit flow on the retry runner
 - **Refs:** FR21, FR21.1, FR21.2, FR21.3, FR21.5, FR21.6, NFR2, NFR5, DD1–DD6, AC-US4.1–4.3a, AC-US5.1–5.3, AC-US5.5
 - **Depends on:** T003, T004
 - **Files:** `resources/js/api.js` (edit), `resources/js/__tests__/submit-flow.test.js` (edit)
@@ -106,8 +106,9 @@
 - **Verify:** `NODE npm test` → all pass, including every pre-existing submit-flow test not listed as approved to change.
 - **Done when:** AC-US4.2, AC-US4.2a, AC-US4.3, AC-US4.3a, AC-US5.2, AC-US5.3, AC-US5.5 hold at flow level with a fake clock.
 - **Out of scope:** the supervisor flow (T008); screen words (T009); changing the server's behaviour for `Retry-After`.
+- **Note:** Pure JS, no Boost query. Approved test changes made with their names kept where possible: lost response (now unconfirmed only after 4 sends), 8 s timeout (now 3 s, four timeouts), unexpected 5xx (now after the resends), zero-grant `doneText` (T004). The 503 case also left the "a refusal from the server is a definitive error" list because 503 is now resent (it has its own new test). Test helper change only: `harness()` injects a fake `sleep` and records `waits`; `loseSends`/`settleSends` answer the four sends so the tests that only needed "unconfirmed" (unreadable 2xx, new submit refused, Retry offline, retry keeps the type) reach it by the new route. No assertion weakened. All 9 new named tests added. `createSubmitFlow` also takes optional `sleep` and `waitsMs` (tests only).
 
-### [ ] T008 [US7] Put the supervisor flow on the retry runner
+### [x] T008 [US7] Put the supervisor flow on the retry runner
 - **Refs:** FR21.7, DD1, DD3, DD6, AC-US3.4, AC-US4.2a
 - **Depends on:** T003, T007
 - **Files:** `resources/js/supervisor.js` (edit), `resources/js/__tests__/supervisor-flow.test.js` (edit)
@@ -115,8 +116,9 @@
 - **Verify:** `NODE npm test` → all pass.
 - **Done when:** restock and correction follow the same automatic-then-manual rules as an operator request (FR21.7).
 - **Out of scope:** the supervisor markup (T012) and the dashboard glue (T009).
+- **Note:** Pure JS, no Boost query. Same classification as T007; one runner per channel. Existing cases changed as approved: lost answer, unexpected server failure, and the "other refusals" list lost its 503 entry (now resent, own test "503 pool_busy is resent automatically"). A 2xx with an unreadable body now counts as no answer (it used to crash `confirmed`). 4 new named tests plus 503, offline-stop and dispose tests.
 
-### [ ] T009 [US4] Show the six states on the dashboard and stop stale flows
+### [x] T009 [US4] Show the six states on the dashboard and stop stale flows
 - **Refs:** FR20.1, FR21, FR21.1, FR21.2, FR21.4, DD6, DD7, DD13, AC-US4.1, AC-US4.4, AC-US5.4
 - **Depends on:** T007, T008
 - **Files:** `resources/js/dashboard.js` (edit), `resources/js/supervisor.js` (edit the `supervisorPart` getters only)
@@ -124,6 +126,7 @@
 - **Verify:** `NODE npm run build`, then in a browser at http://localhost:8080 as Ana: in DevTools set Network to Offline and submit 3 → "Offline — nothing was sent", nothing sent. Set Network to "Block request URL" for `/api/pools/1/allocations` while online, submit 3 → "Pending", then "Retrying automatically, attempt 1 of 3", 2, 3, then "Not confirmed" with Retry; unblock, press Retry → "3 granted" and exactly one new row in the log.
 - **Done when:** the operator can watch the hybrid retry on the real page (checkpoint 2).
 - **Out of scope:** markup, shapes and CSS; quick amounts; any change to `connection.js`.
+- **Note:** Pure JS glue, no Boost query; Blade untouched. `banner-model.js` gained `withTone()` (adds `tone`/`message` for the old markup; removed in T012). Finding: the stack serves assets baked into its images, so UI changes show only after `docker compose up -d --build --wait` (`NODE npm run build` alone is not enough; it must run without `--user` because `public/build/assets` is root-owned). Browser check at 360 px as Ana (headless Chromium via a scratch playwright-core install; needs libasound, fetched into the scratchpad): offline shows "You are offline — nothing was sent" with submit disabled; with `/api/pools/1/allocations` aborted the banner read Retrying automatically 1 of 3 at 57 ms, 2 of 3 at 1.04 s, 3 of 3 at 3.04 s, Not confirmed at 7.02 s, 4 requests, Retry shown, remaining unchanged (97); unblocked and Retry gave "3 granted", remaining 94. Viewer switch during retries is covered by the dispose unit tests, not by a browser run.
 
 **Checkpoint 2:** `NODE npm test` green; on the running stack, blocking `/api/pools/1/allocations` shows Pending → Retrying automatically (1, 2, 3 of 3) → Not confirmed with Retry (about 19 s worst case with a hanging network, about 7 s when the request fails at once); unblock and press Retry → "N granted" with one log entry; switching user in the picker during the retries leaves the new user's screen untouched.
 

@@ -1,15 +1,16 @@
 // Talking to the API: submitting a request safely, and fetching snapshots and log pages (FR12, FR12.1, NFR5, DD8).
 //
 // The submit flow never guesses a total. It shows "pending" at once, leaves the numbers alone until the server has
-// answered, and when the answer is lost it keeps the same idempotency key so a retry cannot be counted twice.
+// answered, and when the answer is lost it resends with the same idempotency key, so a resend cannot be counted twice.
 // `fetch`, the clock and the key generator are passed in, so the flow is tested without a browser.
 
 import { validateAmount } from './form-rules.js';
 import { applyOwnResult } from './pool-state.js';
+import { createRetryRunner } from './retry-policy.js';
 import { returnTimeText } from './time-left.js';
 
-/** A request that has not been answered after this long is "unconfirmed" (8 s). */
-export const SUBMIT_TIMEOUT_MS = 8000;
+/** A send that has not been answered after this long counts as "no answer" (3 s); it is then resent with the same key. */
+export const SUBMIT_TIMEOUT_MS = 3000;
 
 export const OFFLINE_MESSAGE = 'You are offline — nothing was sent';
 
@@ -35,8 +36,13 @@ export function randomKey(cryptoLike = globalThis.crypto) {
 /**
  * The submit flow for one operator on one pool.
  *
+ * A send that gets no answer (a network error, the timeout, an unreadable 2xx, any 5xx) is sent again by itself up to
+ * three times with the SAME idempotency key, only while the browser is online (retry-policy.js). If all fail, or the
+ * device goes offline, the request is "unconfirmed" and Retry starts a fresh round with the same key. A definite
+ * answer (2xx, 4xx) is never resent.
+ *
  * `dispatch` receives two kinds of action:
- *   {type: 'status', status}        what to show: idle-form feedback, pending, done, error, unconfirmed, offline, invalid
+ *   {type: 'status', status}        what to show: pending, resending, retrying, done, error, unconfirmed, offline, invalid
  *   {type: 'state', state, effect}  the new pool state after the server confirmed, and what to do next (see pool-state.js)
  *
  * @param {object} options
@@ -51,24 +57,40 @@ export function randomKey(cryptoLike = globalThis.crypto) {
  * @param {() => number} [options.now]  must be the same clock the caller uses for checkGap (performance.now)
  * @param {() => number} [options.epochNow]  the epoch clock (Date.now), for comparing with server times
  * @param {number} [options.timeoutMs]
+ * @param {(ms: number) => Promise<void>} [options.sleep]  the wait between resends; a real timer when omitted
+ * @param {number[]} [options.waitsMs]  the waits before each resend (1 s, 2 s, 4 s when omitted)
  */
-export function createSubmitFlow({ fetch, userId, poolId, getState, getType = () => 'consumed', dispatch, isOnline, newKey = randomKey, now = () => performance.now(), epochNow = () => Date.now(), timeoutMs = SUBMIT_TIMEOUT_MS }) {
+export function createSubmitFlow({ fetch, userId, poolId, getState, getType = () => 'consumed', dispatch, isOnline, newKey = randomKey, now = () => performance.now(), epochNow = () => Date.now(), timeoutMs = SUBMIT_TIMEOUT_MS, sleep, waitsMs }) {
     // The request being sent or waiting to be retried: {amount, type, key}. Null when nothing is outstanding.
     let attempt = null;
     let inFlight = false;
+    // After dispose() nothing more is dispatched: the viewer changed, and a late answer must not reach the new screen.
+    let disposed = false;
 
-    const status = (value) => dispatch({ type: 'status', status: value });
+    const status = (value) => {
+        if (!disposed) {
+            dispatch({ type: 'status', status: value });
+        }
+    };
+
+    const runner = createRetryRunner({
+        waitsMs,
+        isOnline,
+        sleep,
+        onResending: ({ attempt: number, of, phase }) => status({ state: 'resending', amount: attempt.amount, key: attempt.key, attempt: number, of, phase }),
+    });
 
     function unconfirmed(message) {
         inFlight = false;
         status({ state: 'unconfirmed', amount: attempt.amount, key: attempt.key, ...(message ? { message } : {}) });
     }
 
-    async function send() {
-        inFlight = true;
-        // Synchronously, before the request is made: the screen shows it, and the numbers have not moved.
-        status({ state: 'pending', amount: attempt.amount, key: attempt.key });
-
+    /**
+     * One POST with the attempt's key. Resolves, never rejects: a definite answer, or no answer.
+     *
+     * @returns {Promise<{kind: 'answered', value: object} | {kind: 'no-answer'}>}
+     */
+    async function sendOnce() {
         const controller = new AbortController();
         const timer = setTimeout(() => controller.abort(), timeoutMs);
         let response;
@@ -86,27 +108,23 @@ export function createSubmitFlow({ fetch, userId, poolId, getState, getType = ()
                 signal: controller.signal,
             });
         } catch {
-            // No answer: the request may or may not have arrived. Keep the key so Retry is safe.
-            return unconfirmed();
+            // No answer: the request may or may not have arrived. The same key makes a resend safe.
+            return { kind: 'no-answer' };
         } finally {
             clearTimeout(timer);
         }
 
         if (response.status === 200 || response.status === 201) {
-            let result;
-
             try {
-                result = await response.json();
+                return { kind: 'answered', value: { confirmed: true, result: await response.json(), replayed: response.status === 200 } };
             } catch {
-                return unconfirmed();
+                return { kind: 'no-answer' };
             }
-
-            return confirmed(result, response.status === 200);
         }
 
-        // An unexpected server failure does not say whether the entry was stored. Retrying with the same key is safe.
-        if (response.status >= 500 && response.status !== 503) {
-            return unconfirmed();
+        // A server failure (including 503 pool_busy) does not say whether the entry was stored: resend with the same key.
+        if (response.status >= 500) {
+            return { kind: 'no-answer' };
         }
 
         let body = null;
@@ -117,13 +135,46 @@ export function createSubmitFlow({ fetch, userId, poolId, getState, getType = ()
             // Not JSON (for example a gateway page): fall through to the generic message.
         }
 
+        return { kind: 'answered', value: { confirmed: false, status: response.status, body } };
+    }
+
+    /**
+     * @param {'pending'|'retrying'} firstState  what the screen says while the first send of this round is out
+     */
+    async function send(firstState) {
+        inFlight = true;
+        // Synchronously, before the request is made: the screen shows it, and the numbers have not moved.
+        status({ state: firstState, amount: attempt.amount, key: attempt.key });
+
+        const round = await runner.run(sendOnce);
+
+        if (disposed) {
+            inFlight = false;
+
+            return;
+        }
+
+        if (round.outcome === 'gave-up') {
+            return unconfirmed();
+        }
+
+        if (round.outcome === 'stopped-offline') {
+            return unconfirmed(OFFLINE_MESSAGE);
+        }
+
+        const { value } = round;
+
+        if (value.confirmed) {
+            return confirmed(value.result, value.replayed);
+        }
+
         attempt = null;
         inFlight = false;
         status({
             state: 'error',
-            status: response.status,
-            code: body?.error?.code ?? 'error',
-            message: body?.error?.message ?? 'Something went wrong.',
+            status: value.status,
+            code: value.body?.error?.code ?? 'error',
+            message: value.body?.error?.message ?? 'Something went wrong.',
         });
     }
 
@@ -177,13 +228,14 @@ export function createSubmitFlow({ fetch, userId, poolId, getState, getType = ()
             }
 
             attempt = { amount: check.value, type: getType() === 'temporary' ? 'temporary' : 'consumed', key: newKey() };
-            await send();
+            await send('pending');
 
             return { started: true };
         },
 
         /**
-         * Send the unconfirmed request again with the SAME key, so the server counts it once and returns the original result.
+         * Send the unconfirmed request again with the SAME key, so the server counts it once and returns the original
+         * result. It starts a fresh round: if it again gets no answer, up to three more automatic resends follow.
          *
          * @returns {Promise<{started: boolean, reason?: string}>}
          */
@@ -202,9 +254,20 @@ export function createSubmitFlow({ fetch, userId, poolId, getState, getType = ()
                 return { started: false, reason: 'offline' };
             }
 
-            await send();
+            await send('retrying');
 
             return { started: true };
+        },
+
+        /** The browser went offline: cut a waiting resend short; the round then stops as "not confirmed". */
+        goOffline() {
+            runner.abortWait();
+        },
+
+        /** The viewer changed: stop resending and drop anything this flow would still dispatch. */
+        dispose() {
+            disposed = true;
+            runner.dispose();
         },
     };
 }

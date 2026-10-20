@@ -1,7 +1,8 @@
 // The Alpine component behind the dashboard: it glues the pure modules (pool-state, log-renderer, viewer, connection)
 // to the page. The logic lives in those modules and is tested there; this file only wires them to the DOM and the network.
 
-import { createSubmitFlow, doneText, fetchLog, fetchSnapshot } from './api.js';
+import { createSubmitFlow, fetchLog, fetchSnapshot } from './api.js';
+import { bannerFor, withTone } from './banner-model.js';
 import { createConnection } from './connection.js';
 import { connectEcho } from './echo.js';
 import { createExpiryTimer } from './expiry-timer.js';
@@ -89,6 +90,13 @@ export function poolDashboard() {
                 }
             });
 
+            // A new result or state is brought into view, so a thumb user does not have to look for it (DD13).
+            this.$watch('status', () => {
+                if (this.banner) {
+                    this.$nextTick(() => document.getElementById('result-banner')?.scrollIntoView({ block: 'nearest' }));
+                }
+            });
+
             this.startLive();
             this.loadUsers();
         },
@@ -102,7 +110,12 @@ export function poolDashboard() {
             });
 
             window.addEventListener('online', () => connection.browserOnline(true));
-            window.addEventListener('offline', () => connection.browserOnline(false));
+            window.addEventListener('offline', () => {
+                connection.browserOnline(false);
+                // A resend that is waiting stops now and the request shows as not confirmed (FR21.3).
+                submitFlow?.goOffline();
+                this.supervisorGoOffline();
+            });
 
             echo = connectEcho({
                 poolId: this.pool.id,
@@ -113,6 +126,8 @@ export function poolDashboard() {
 
         /** A fresh submit flow for the current viewer. Switching viewer drops whatever the previous one had outstanding. */
         newSubmitFlow() {
+            // Stop the old viewer's resends and drop a late answer, so it cannot reach the new viewer's screen.
+            submitFlow?.dispose();
             this.amount = '';
             this.status = { state: 'idle' };
 
@@ -361,8 +376,9 @@ export function poolDashboard() {
             return this.connectionState === 'offline';
         },
 
+        /** The request is on its way: first send, an automatic resend, or a manual Retry. */
         get isPending() {
-            return this.status.state === 'pending';
+            return ['pending', 'resending', 'retrying'].includes(this.status.state);
         },
 
         get isUnconfirmed() {
@@ -381,25 +397,9 @@ export function poolDashboard() {
             return this.isPending ? 'Sending…' : 'Request';
         },
 
-        /** The full-width result of the last request, in words, or null. */
+        /** The full-width result of the last request, in words and a shape, or null (banner-model.js). */
         get banner() {
-            const { status } = this;
-
-            if (status.state === 'done') {
-                const text = doneText(status, Date.now() + (this.state.serverOffsetMs ?? 0));
-
-                return { tone: status.granted === status.requested ? 'success' : 'warning', text };
-            }
-
-            if (status.state === 'error') {
-                return { tone: 'warning', text: status.message };
-            }
-
-            if (status.state === 'unconfirmed') {
-                return { tone: 'warning', text: 'Not confirmed — ', message: status.message ?? '' };
-            }
-
-            return null;
+            return withTone(bannerFor(this.status, { serverNowMs: Date.now() + (this.state.serverOffsetMs ?? 0), channel: 'request' }));
         },
 
         get indicatorText() {
@@ -445,7 +445,7 @@ export function poolDashboard() {
                     key: 'pending',
                     pending: true,
                     own: true,
-                    label: this.isPending ? 'Pending' : 'Not confirmed',
+                    label: this.status.state === 'pending' ? 'Pending' : this.isPending ? 'Retrying…' : 'Not confirmed',
                     text: `${this.viewer?.name ?? 'You'}: requesting ${this.status.amount}`,
                 });
             }
