@@ -210,7 +210,7 @@ export function createSubmitFlow({ fetch, userId, poolId, getState, getType = ()
 }
 
 /**
- * The words under a finished request: "4 granted", "4 of 6 granted", "0 of 3 granted — none left", and for units that
+ * The words under a finished request: "4 granted", "4 of 6 granted", "None granted — 0 of 3, none left", and for units that
  * come back, " · returns 10:00 tomorrow" (FR5.6, FR5.7).
  *
  * @param {{requested: number, granted: number, expiresAt?: string|null}} status  the `done` status
@@ -219,7 +219,7 @@ export function createSubmitFlow({ fetch, userId, poolId, getState, getType = ()
  */
 export function doneText({ requested, granted, expiresAt = null }, serverNowMs, timeZone) {
     if (granted === 0) {
-        return `0 of ${requested} granted — none left`;
+        return `None granted — 0 of ${requested}, none left`;
     }
 
     const base = granted === requested ? `${granted} granted` : `${granted} of ${requested} granted`;

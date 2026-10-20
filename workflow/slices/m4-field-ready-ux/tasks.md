@@ -52,7 +52,7 @@
 
 ## Phase 1 — Pure modules (blocks everything after)
 
-### [ ] T003 [P] Add the retry runner `retry-policy.js` with its tests
+### [x] T003 [P] Add the retry runner `retry-policy.js` with its tests
 - **Refs:** FR21.3, FR21.5, FR21.6, FR21.7, DD1, DD2, DD5, AC-US4.2a, AC-US4.3, AC-US5.2
 - **Depends on:** T001
 - **Files:** `resources/js/retry-policy.js` (create), `resources/js/__tests__/retry-policy.test.js` (create)
@@ -60,8 +60,9 @@
 - **Verify:** `NODE npm test` → the new file passes. Named tests: `sends once and stops when the first send is answered`; `makes exactly 4 sends in total when nothing is ever answered, then gives up`; `waits 1 s, 2 s, 4 s in that order`; `an answer on the second resend stops the loop`; `stops with stopped-offline when the device goes offline before a resend, sending nothing more`; `abortWait during a wait ends the round as stopped-offline when offline`; `dispose during a wait returns disposed and sends nothing more`; `onResending reports attempt 1 to 3 of 3, waiting then sending`.
 - **Done when:** the runner proves AC-US4.2a ("exactly 4 sends, then no further send") with a fake sleep.
 - **Out of scope:** wiring it into `api.js` or `supervisor.js` (T007, T008); idempotency keys (the caller owns them).
+- **Note:** Pure JS, no Laravel API, so no Boost query. Beyond the task: after a send that gets no answer, the runner checks `disposed` before anything else, so a disposed round never reports gave-up. 8 named tests pass.
 
-### [ ] T004 [P] Add the banner model `banner-model.js`, with the new zero-grant wording
+### [x] T004 [P] Add the banner model `banner-model.js`, with the new zero-grant wording
 - **Refs:** FR20, FR20.1, FR20.2, FR21, FR22.2, DD7, DD8, AC-US3.1, AC-US3.3, AC-US4.5
 - **Depends on:** T001
 - **Files:** `resources/js/banner-model.js` (create), `resources/js/__tests__/banner-model.test.js` (create), `resources/js/api.js` (edit `doneText` only), `resources/js/__tests__/submit-flow.test.js` (edit the one `doneText` assertion near line 443)
@@ -69,8 +70,9 @@
 - **Verify:** `NODE npm test` → passes. Named tests: `every state has words and a shape`; `no two different states share both the same words and the same shape`; `full, partial and zero grants read 4 granted, 4 of 6 granted and None granted`; `a temporary grant adds the return time`; `Retry is offered only when not confirmed`; `a refusal starts with Refused and carries the server's reason`; `pending, offline, resending, unconfirmed, retrying and done differ by words alone and by shape alone`; `restock and correction use the same kinds`.
 - **Done when:** AC-US3.1 wording and AC-US4.5 are proved by a table-driven test.
 - **Out of scope:** the Blade markup and CSS (T012, T013); the `dashboard.js` getter (T009).
+- **Note:** Pure JS plus a one-string change in api.js; no Boost query. Deviation within the task's intent: the plan and PRD disagree on the shape of 'Retrying' (AC-US4.3 says same as Pending, AC-US4.5 says all six states differ by shape alone, and the task maps resending and retrying both to `cycle`). To satisfy AC-US4.5 `retrying` gets its own shape `dot-ring` (a ring with a filled centre), so T013 draws seven shapes, not six. Words differ too. The `doneText` assertion at submit-flow.test.js:443 now expects the new zero-grant text. The banner model returns only {kind, shape, text, note, action}; T009 maps tone/message for the old Blade until T012.
 
-### [ ] T005 [P] Add the amount helpers `amount-controls.js`
+### [x] T005 [P] Add the amount helpers `amount-controls.js`
 - **Refs:** FR19, FR19.1, FR19.2, FR19.3, DD9, DD10, AC-US1.2, AC-US1.3, AC-US1.5, AC-US1.6
 - **Depends on:** T001
 - **Files:** `resources/js/amount-controls.js` (create), `resources/js/__tests__/amount-controls.test.js` (create)
@@ -78,8 +80,9 @@
 - **Verify:** `NODE npm test` → passes. Named tests: `quick amounts above the remaining are listed but not usable`; `All fills exactly the remaining`; `All is left out when it would repeat a fixed amount`; `nothing is usable at 0 left`; `the stepper never goes below 1 or above the remaining`; `typed garbage steps from zero`; `a quick amount sets the amount, it never adds to it`.
 - **Done when:** AC-US1.2, AC-US1.3 and AC-US1.6 are proved by unit tests.
 - **Out of scope:** markup, Alpine wiring and CSS (T010, T011).
+- **Note:** Pure JS, no Boost query. At remaining 0 the row still lists 1, 5, 10 and an unusable 'All (0)'; nothing is usable. Stepper from a value above the new remaining comes down to the remaining.
 
-### [ ] T006 [P] Add the contrast helper and the design-token test
+### [x] T006 [P] Add the contrast helper and the design-token test
 - **Refs:** FR22, NFR4, DD11, DD12, AC-US2.1, AC-US7.2
 - **Depends on:** T002
 - **Files:** `resources/js/__tests__/helpers/contrast.js` (create), `resources/js/__tests__/design-tokens.test.js` (create)
@@ -87,6 +90,7 @@
 - **Verify:** `NODE npm test` → passes; temporarily change `--color-text-muted` to `#999999` in a scratch copy and confirm the test fails with the pair name (then restore; record that you did it).
 - **Done when:** AC-US2.1 is proved for every declared colour and fails loudly when a token regresses.
 - **Out of scope:** recolouring anything; a pair only appears in the manifest if the CSS really uses it (the browser audit in T016 catches the rest).
+- **Note:** Pure JS test, no Boost query. Negative check done: with --color-text-muted set to #999999 the test failed naming 'text-muted (#999999) on bg (#ffffff) is 2.85:1, needs 7:1' (and four more pairs); tokens.css restored (git diff empty). The manifest lists only pairs the CSS uses (T002 note).
 
 **Checkpoint 1:** `NODE npm test` runs the four new test files (retry-policy, banner-model, amount-controls, design-tokens) and all earlier tests green; nothing on screen has changed yet except the zero-grant wording in the result text.
 

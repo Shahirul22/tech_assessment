@@ -440,7 +440,7 @@ test('the banner says when temporary units return, in full, partial, zero and co
 
     assert.equal(doneText({ requested: 4, granted: 4, expiresAt }, serverNow, 'UTC'), '4 granted · returns 10:00 tomorrow');
     assert.equal(doneText({ requested: 6, granted: 4, expiresAt }, serverNow, 'UTC'), '4 of 6 granted · returns 10:00 tomorrow');
-    assert.equal(doneText({ requested: 3, granted: 0, expiresAt: null }, serverNow, 'UTC'), '0 of 3 granted — none left');
+    assert.equal(doneText({ requested: 3, granted: 0, expiresAt: null }, serverNow, 'UTC'), 'None granted — 0 of 3, none left');
     assert.equal(doneText({ requested: 4, granted: 4, expiresAt: null }, serverNow, 'UTC'), '4 granted');
     assert.equal(doneText({ requested: 6, granted: 4 }, serverNow, 'UTC'), '4 of 6 granted');
 });
