@@ -1,3 +1,7 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
 # Project rules
 
 These rules are written by hand, sit outside Boost's managed block below, and survive `boost:update`.
@@ -15,7 +19,37 @@ These rules are written by hand, sit outside Boost's managed block below, and su
 
 - Everything runs in Docker; do not assume PHP, Composer or Node on the host. Shorthand: `APP` = `docker compose run --rm app`, `NODE` = `docker compose --profile tools run --rm node` (add `--user "$(id -u):$(id -g)"` when a command writes files). Tests: `APP php artisan test` (unit + feature, excludes `concurrency`), `APP php artisan test --group=concurrency`, `NODE npm test`.
 - `requirement.md` is never edited.
-- The workflow documents (PRD, plan, tasks, rules) live in `workflow/`; start with `workflow/README.md`.
+- The workflow documents (PRD, plan, tasks, rules) live in `workflow/`; start with `workflow/README.md`. Precedence when they disagree: rules > `requirement.md` §0 > PRD > plan > tasks. Each milestone (M1–M4, all implemented) has its PRD, plan and tasks in `workflow/slices/`; code comments cite their IDs (FR, DD, PQ, AC). The HTTP contract is `docs/api-contract.md`.
+
+## Commands
+
+- Start the stack: `docker compose up -d --build --wait` (app at http://localhost:8080, Reverb websocket on 8081). `.env.docker` is gitignored and Compose needs it; the README has a snippet that generates one.
+- Everything in CI-style order: `bash scripts/verify.sh` (smoke, Pest, concurrency, JS, live latency; stops at first failure). It **erases demo data** and reseeds at the end.
+- One PHP test: `APP php artisan test --compact --filter=testName` or `APP php artisan test tests/Feature/IdempotencyTest.php`. Run `vendor/bin/pint --dirty --format agent` (inside `APP`) after editing PHP.
+- One JS test: `NODE node --test resources/js/__tests__/<file>.test.js`. `NODE npm ci` once on a fresh clone.
+- Concurrency tests (`tests/Concurrency`, group `concurrency`) hit the **running stack over real HTTP** with committed data (no `RefreshDatabase`), so start the stack first. They and `tests/Live/live-latency.mjs` consume units; reset with `APP php artisan migrate:fresh --seed`.
+- Browser audits `node tests/Live/ui-audit.mjs` and `offline-flow.mjs` run on the **host** (need a local Chromium, `CHROMIUM_PATH`), not in Docker, and are outside `verify.sh`.
+- Short expiry windows for demos: `bash scripts/demo-expiry.sh` (sets `POOL_WINDOW_SCALE`; no code changes); `docker compose up -d --wait` returns to 24/48/72 h.
+- Feature tests use PostgreSQL (the lock and `timestamptz(6)` behaviour matter), so tests need the compose `postgres` service up.
+
+## Architecture
+
+A Laravel 13 JSON API plus an Alpine.js single page (`resources/views/dashboard.blade.php`, `resources/js/`), PostgreSQL, and Reverb websockets. There is no auth: `demo.user` middleware trusts an `X-Demo-User` header and `role:operator|supervisor` middleware gates routes (`routes/api.php`). That is a demo role switch, not security.
+
+**One write path, one lock.** Operator requests, supervisor restocks and corrections all go through `App\Pool\PoolWriteGate::locked()`: a transaction at READ COMMITTED that takes `SELECT … FOR UPDATE` on the pool row with a 5 s `lock_timeout` (surfaced as `PoolBusy` → 503). Under the lock the service reloads the ledger, computes, and stores one entry numbered from `LedgerSequence` (the pool's `version`). Commit order is therefore service order. `AllocationService`, `RestockService` and `CorrectionService` each follow this shape; do not add a write that bypasses the gate.
+
+**Ledger-derived state, nothing stored.** `remaining`, expiries and operator status are never stored. `LedgerRepository` loads restocks, allocations and corrections as plain rows into an immutable `Calculation\Ledger`; `PoolCalculator::calculateAt($ledger, $instant)` (pure, built from `Calculation\Steps`) derives the state at an instant. Consequences:
+- Expiry writes and broadcasts nothing; every read recomputes it. The client schedules its own refresh at `next_expiry_at`.
+- Corrections are extra ledger entries, never edits. Original rows stay readable.
+- A write is evaluated at `Ledger::evaluationInstant()`: its server receipt time, but never earlier than the newest entry already stored, so replies stay consistent with the ledger and replays are exact. Client time fields are ignored.
+- Audit (`app/Pool/Audit`) replays history with `Ledger::asOf($seq)` to compute before/after status and "overdrawn in hindsight".
+- Tier windows and status thresholds come from `config/pool_rules.php`, validated at boot into `RulesConfig` (`PoolServiceProvider`); a bad config stops startup. Time comes from the `Clock` interface (`FrozenClock` in tests via `freezeClock()`).
+
+**Idempotency.** Writes require an `Idempotency-Key` header. The same key with the same payload replays the stored result (200 + `Idempotent-Replayed`, no new entry, no broadcast); a different payload is 409. Errors are rendered by `Http\ApiException` / `ApiErrorRenderer`.
+
+**Live updates.** After commit, `PoolWriteGate::announce()` defers a `PoolUpdated` broadcast (public channel `pool.{id}`, event `pool.updated`, carrying `version`, `remaining` and the rendered log entry). A broadcast failure is reported and swallowed. The client (`resources/js/pool-state.js`, pure functions) applies updates in `version` order, holds a gap for 500 ms, then fetches a snapshot (`SnapshotService`, `GET /api/pools/{pool}`); it also polls every 10 s, so Reverb being down degrades but does not break the screen. `dashboard.js` is the Alpine glue; the other `resources/js/*.js` modules are DOM-free logic with tests in `resources/js/__tests__/`.
+
+**Tests.** `tests/Pest.php` holds the shared world builders (`workedPool()`, `expiryWorld()`, `submitAllocation()`, `postRestock()`, `correct()` …). Unit tests cover the pure calculation, Feature tests run services and HTTP against Postgres with `RefreshDatabase`, and `tests/Live/*.mjs` are Node scripts against the running stack.
 
 <laravel-boost-guidelines>
 === foundation rules ===
