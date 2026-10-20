@@ -206,7 +206,7 @@
 
 ## Phase 5 — Browser audits (approved dependency: `playwright-core`, dev only)
 
-### [ ] T016 [US2] Add the browser audit `tests/Live/ui-audit.mjs`
+### [x] T016 [US2] Add the browser audit `tests/Live/ui-audit.mjs`
 - **Refs:** FR22, FR23, FR24, FR24.1, NFR3, NFR4, DD12, DD14, AC-US1.8, AC-US2.1, AC-US6.1–6.3, AC-US7.1, AC-US7.2
 - **Depends on:** T013, T014
 - **Files:** `package.json` (edit), `package-lock.json` (edit), `tests/Live/ui-audit.mjs` (create)
@@ -214,8 +214,9 @@
 - **Verify:** `node tests/Live/ui-audit.mjs` → every check prints PASS and the exit code is 0; break one thing on purpose (set `.log__action { min-height: 2rem }` in a scratch build) and confirm the script fails naming that control, then restore.
 - **Done when:** the numbers behind AC-US1.8, AC-US2.1, AC-US6.1–6.3, AC-US7.1 and AC-US7.2 are measured, not judged by eye.
 - **Out of scope:** greyscale judgement (manual), other dependencies, running the script inside Docker.
+- **Note:** No Boost query (plain Node script and a dev dependency; no Laravel API). Installed `playwright-core` ^1.64.1 (dev only, approved) with `docker compose --profile tools run --rm --user "$(id -u):$(id -g)" -e HOME=/tmp node npm install --save-dev playwright-core`; it drives the Chromium in `~/.cache/ms-playwright/chromium-1243/` with no API problem. The Chromium needs libasound2, which was missing on this machine; it was unpacked (without root) into the scratchpad and used through `LD_LIBRARY_PATH` (the script header says Chromium needs its system libraries). No `npm` script added. Result: `node tests/Live/ui-audit.mjs` → six PASS lines, exit 0: 449 tap targets (smallest 48.0 px, all gaps ≥ 8 px), 2748 text elements (lowest 7.17:1, 0 skipped over images or gradients), 92 key-number measurements ≥ 24 px at 360 px, 36 overflow checks, 11 submit-above-log checks. Negative check: with `.log__action { min-height: 2rem }` the script failed with 21 offenders naming "Correct entry #15 … is 102.8 x 32.0" and exit 1; app.css restored (git diff empty) and the stack rebuilt. Banner states other than a real grant are shown by setting the component status; the script says so in its header.
 
-### [ ] T017 [P] [US5] Add the offline and duplicate browser flow `tests/Live/offline-flow.mjs`
+### [x] T017 [P] [US5] Add the offline and duplicate browser flow `tests/Live/offline-flow.mjs`
 - **Refs:** FR21.3, FR21.5, FR21.6, NFR5, DD2, DD5, AC-US4.2, AC-US4.2a, AC-US4.4, AC-US5.1–5.5
 - **Depends on:** T009, T016
 - **Files:** `tests/Live/offline-flow.mjs` (create)
@@ -223,8 +224,9 @@
 - **Verify:** `node tests/Live/offline-flow.mjs` → all five cases PASS, exit 0.
 - **Done when:** AC-US4.2a, AC-US4.4 and AC-US5.1–5.5 are proved against the real page and server.
 - **Out of scope:** the wording and the shapes (T004, T016).
+- **Note:** No Boost query. `node tests/Live/offline-flow.mjs` → 5 of 5 cases PASS, exit 0: (1) offline: 0 requests, 0 allocations after going online; (2) response aborted after `route.fetch()` committed it: "Retrying automatically, attempt 1 of 3" then "3 granted", 2 sends with 1 key, +1 allocation; (3) all sends aborted: exactly 4 sends with 1 key, "Not confirmed" + Retry, still 4 sends after 2.5 s, Retry → "3 granted", +1 allocation; (4) 10 offline/online toggles during one submit and Retry taps: 1 key, ≤ 1 allocation; (5) 422 and 409: one request each, "Refused — …". Allocations are counted from `GET /api/pools/1/log?limit=50` (50 is the largest page the API accepts). It consumed about 4 units; the demo data is reseeded at the end of the run.
 
-### [ ] T018 Fix what the audits found and re-run them
+### [x] T018 Fix what the audits found and re-run them
 - **Refs:** FR22, FR23, FR24, NFR4, NFR5, AC-US1.8, AC-US2.1, AC-US5.3, AC-US7.1
 - **Depends on:** T016, T017
 - **Files:** `resources/css/app.css` (edit), `resources/css/tokens.css` (edit), and whichever of `resources/js/*.js` or `resources/views/dashboard.blade.php` an audit failure points to (list them in the note)
@@ -232,6 +234,7 @@
 - **Verify:** `node tests/Live/ui-audit.mjs` and `node tests/Live/offline-flow.mjs` → exit 0; `NODE npm test` → pass.
 - **Done when:** both scripts are green with the measured numbers recorded in the note (lowest contrast ratio found, smallest target found).
 - **Out of scope:** new features or design changes the audits did not ask for.
+- **Note:** No audit failed on the first run of either script, so no cause was fixed and no file changed. Measured numbers: lowest contrast 7.17:1 (white on accent), smallest target 48.0 px. Both scripts and `npm test` (210 pass) re-run green after the negative check was reverted.
 
 **Checkpoint 5:** `node tests/Live/ui-audit.mjs` and `node tests/Live/offline-flow.mjs` print PASS with their measured numbers; `NODE npm test` green.
 
