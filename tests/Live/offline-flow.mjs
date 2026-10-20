@@ -163,6 +163,8 @@ const cases = [
 
         expectEqual(sent.length, 4, 'sends');
         expectEqual(distinct(sent).length, 1, 'distinct keys');
+        // Alpine reveals an x-show element in a timeout, a few milliseconds after the text changes.
+        await page.locator('#retry').waitFor({ state: 'visible', timeout: 2000 }).catch(() => {});
         expectEqual(await page.locator('#retry').isVisible(), true, 'Retry visible');
 
         await page.waitForTimeout(2500);

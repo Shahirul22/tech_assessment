@@ -242,7 +242,7 @@
 
 ## Phase 6 — Final README and regression (US8, US9)
 
-### [ ] T019 [US8] README: decisions, trade-offs and accepted risks in plain words
+### [x] T019 [US8] README: decisions, trade-offs and accepted risks in plain words
 - **Refs:** FR25, AC-US8.1
 - **Depends on:** T018
 - **Files:** `README.md` (edit)
@@ -250,8 +250,9 @@
 - **Verify:** every D1–D12 id appears once with a reason: `grep -c "^- \*\*D[0-9]" README.md` (or the format you use) returns 12; every command in the edited text has been run or is copied from a script.
 - **Done when:** AC-US8.1 (decisions, trade-offs, accepted risks) holds; the check results are added in T021.
 - **Out of scope:** the walkthrough (T020), results (T021).
+- **Note:** No Boost query (README only). Rewrote "Assumptions and accepted trade-offs" as "Decisions and trade-offs": D1–D12 from `requirement.md` section 3, one or two plain sentences each with the reason (`grep -c "^- \*\*D[0-9]" README.md` → 12), the other decisions, and the accepted risks (derived remaining, nothing survives a reload, up to about 19 s before Retry, `effective_at` versus commit order, public channel, host-run audits). Replaced the M1-only "What M1 does" section with a milestone table, fixed the stale "placeholder" supervisor text and the intro, and documented the new test coverage and the two audit scripts (host run, `playwright-core` dev dependency) in "Test it". No result is stated that was not produced; the M4 results are a marked placeholder until T022/T023.
 
-### [ ] T020 [US8] README: the demo walkthrough script
+### [x] T020 [US8] README: the demo walkthrough script
 - **Refs:** FR25, AC-US8.2
 - **Depends on:** T019
 - **Files:** `README.md` (edit)
@@ -259,8 +260,9 @@
 - **Verify:** every command in the section exists (`ls scripts/`; `docker compose config` accepts the compose files named); the section has at most 10 minutes of waiting by the script's own timings.
 - **Done when:** a person can follow it from a clean checkout (proved in T022).
 - **Out of scope:** adding new scripts or seed data.
+- **Note:** No Boost query (README only). Added "Demo walkthrough (10 minutes)": reset (`docker compose down -v`, `bash scripts/demo-expiry.sh`, optional `migrate:fresh --seed --force`) and seven steps with an expected result each. Commands checked: `ls scripts` shows `demo-expiry.sh`, `smoke.sh`, `verify.sh`; `docker compose -f docker-compose.yml -f docker-compose.override.yml -f docker-compose.demo.yml config -q` accepts the compose files the script uses. Waiting is about 2 min (Bronze window of the demo stack) plus 7 s. The partial grant uses `docker compose stop reverb` so one screen stays stale; the exact numbers in steps 2–5 are verified in T022.
 
-### [ ] T021 [US8] README: manual checks and the results section for M4
+### [x] T021 [US8] README: manual checks and the results section for M4
 - **Refs:** FR25, NFR2, NFR3, NFR4, AC-US2.2, AC-US2.4, AC-US4.6, AC-US8.1
 - **Depends on:** T020
 - **Files:** `README.md` (edit)
@@ -268,8 +270,9 @@
 - **Verify:** the table rows each have a "How" and an "Expected" cell; no placeholder text remains after T023.
 - **Done when:** the README lists every manual check M4 depends on (AC-US2.2, 2.4, 4.6).
 - **Out of scope:** the results themselves (T022, T023).
+- **Note:** No Boost query (README only). Updated checks 4 and 5 to the new behaviour (quick amounts still fill the field offline; block-the-URL instead of throttling, automatic resends, then Retry), check 6 wording (Pending within 100 ms), and added checks 17 (offline during resends), 18 (greyscale), 19 (Tab walk) and 20 (`ui-audit.mjs`). Added "Results of the M4 run" as a marked placeholder; the M1 results keep their own heading.
 
-### [ ] T022 [US8] Follow the demo script on a clean checkout and fix it
+### [x] T022 [US8] Follow the demo script on a clean checkout and fix it
 - **Refs:** AC-US8.2, AC-US2.2, AC-US2.4, AC-US4.6
 - **Depends on:** T021
 - **Files:** `README.md` (edit)
@@ -277,8 +280,9 @@
 - **Verify:** the whole script is followed to the end with every expected result seen, in at most 10 minutes of active time.
 - **Done when:** AC-US8.2, AC-US2.2, AC-US2.4 and AC-US4.6 have recorded results.
 - **Out of scope:** new features found while demoing (report them instead).
+- **Note:** No Boost query (README only). Followed the walkthrough from `docker compose down -v` and `bash scripts/demo-expiry.sh` (stack up in 31 s) in headless Chromium driven by a scratch Playwright script (not a person; the README says so). All seven steps gave their expected result (numbers in the README results). The script ran twice because a `docker compose` call in the first run used the wrong working directory (script error, not a page error); step 5 was re-run from a re-created state with the exact numbers the README now states. One README fix: step 5 now says to press Correct on the same row again for the second and third amend. Manual checks done: greyscale (CSS grayscale filter, the six states told apart), Tab walk (27 stops, all with a name and a focus ring), 100 ms latency (Pending after 2–3 ms, confirmed after 108–111 ms), offline during the resends (check 17). Finding: Alpine reveals `x-show` elements in a timeout, so the Retry button appears about 3 ms after the banner text; harmless on screen, but `offline-flow.mjs` case 3 failed once on that race, so it now waits for the button to be visible (still asserts it is). The case then passed 3 of 3 runs.
 
-### [ ] T023 [US9] Run the full regression and record the numbers
+### [x] T023 [US9] Run the full regression and record the numbers
 - **Refs:** FR26, NFR1, NFR2, NFR6, AC-US9.1, AC-US9.2, AC-US4.6
 - **Depends on:** T022
 - **Files:** `README.md` (edit the results section only)
@@ -286,8 +290,9 @@
 - **Verify:** `bash scripts/verify.sh` → `verify: all 5 steps passed`; the git diff of M4 contains no server file.
 - **Done when:** AC-US9.1 and AC-US9.2 are shown to pass with recorded numbers, and FR26 is shown by the diff.
 - **Out of scope:** fixing non-M4 issues.
+- **Note:** Boost `search-docs` query: "vite build assets blade", run before the final `NODE npm run build` (built in 194 ms; the page uses `@vite` with no `assets` option, so nothing to add). `bash scripts/verify.sh` → `verify: all 5 steps passed`: smoke OK, 405 tests (1704 assertions), concurrency p95 0.676 s (mixed) and 0.709 s for 50 × 3 (exactly 100 granted, one partial grant of 1, replayed key counted once), 210 JS tests, live 10/10 within 2000 ms (median 37 ms). `ui-audit.mjs` and `offline-flow.mjs` exit 0 (lowest contrast 7.17:1, smallest target 48.0 px). `git diff --stat 3399441 -- app database routes config` is empty: no server file changed (FR26). Results are in the README. The demo data was reseeded after the audits.
 
-### [ ] T024 Re-run the rules check, tidy up and close the plan notes
+### [x] T024 Re-run the rules check, tidy up and close the plan notes
 - **Refs:** plan §2 and §11 "Rules re-check", laravel-boost rules 1–6
 - **Depends on:** T023
 - **Files:** `workflow/slices/m4-field-ready-ux/plan.md` (edit §11 "Rules re-check" and §12 only), `workflow/slices/m4-field-ready-ux/tasks.md` (edit status markers)
@@ -295,6 +300,7 @@
 - **Verify:** the Rules re-check section no longer says "Not yet run"; `git status` shows no unintended file.
 - **Done when:** the plan's rules table is current and the slice is ready for review.
 - **Out of scope:** marking the tasks file or PRD Done (the user decides).
+- **Note:** No Boost query (documents only). Plan §11 "Rules re-check" is filled (one line per rule, with the Boost calls actually made) and §12 has a dated row listing the implementation deviations, marked pending the user (notably the seventh shape `dot-ring`). Pint passed. `git status` shows only README.md, plan.md, tasks.md, offline-flow.mjs and the pre-existing `requirement.md` change, which is left out of the commit; no `.env*`, `node_modules/`, `vendor/`, `.codegraph/` or build output is staged.
 
 **Checkpoint 6:** the README is final (decisions, trade-offs, demo walkthrough, checks with M4 results); `bash scripts/verify.sh` passes; both audit scripts pass; every PRD acceptance criterion has a recorded result.
 

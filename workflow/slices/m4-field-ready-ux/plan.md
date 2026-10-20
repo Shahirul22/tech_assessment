@@ -290,10 +290,24 @@ Order is by dependency; **[P]** = can run in parallel with its siblings. One com
 | 10 | No "Rules re-check" yet. | Open | Filled by T024. | Implementer |
 
 ### Rules re-check
-*Not yet run (filled in by the final task).*
+Re-run on 2026-10-20 by T024, after reading `workflow/rules/laravel-boost.md` and `CLAUDE.md` again.
+
+| Rule | Result | Evidence |
+|---|---|---|
+| laravel-boost 1 (`search-docs` before Laravel code) | Complied | `search-docs` queries made: "blade anonymous components props", "blade components accessibility", "blade attributes merge class" (T010, reused by T012; Blade, `x-result-banner`); "pest feature test view assertions" and "assertSee assertSeeHtml response content" (T015); "vite build assets blade" (T023, before the final build). The plan session also ran "vite build assets blade", "blade components accessibility" and "blade @vite directive". Pure JS and CSS tasks touched no Laravel API and ran none, and said so in their notes. |
+| laravel-boost 2 (real schema, tinker, `last-error`) | Not needed | No schema, query or model work. Behaviour was checked by tests and by browser scripts, not tinker; `last-error` and `browser-logs` were not needed. |
+| laravel-boost 3 (`application-info` at session start) | Complied | Called at the start of the implementation session (Laravel 13.37.0, PHP 8.4, Pest 4.7.8, Vite 8.3.4, Alpine 3.17.4); noted in T001. |
+| laravel-boost 4 (never continue without Boost) | Complied | Boost answered every call; the stack was started first (`docker compose up -d --wait`). |
+| laravel-boost 5 (each note names the query) | Complied | Every Blade, Vite and Pest task note names its query; JS and CSS notes say none was needed. |
+| laravel-boost 6 (Boost never overrides the PRD or plan) | Complied | No conflict with Boost guidance. Deviations from the plan itself are in the change log below. |
+| `CLAUDE.md`: structure and dependencies | Complied | New files only in existing folders; the one new dependency is the approved `playwright-core` (dev). No file under `app/`, `database/`, `routes/` or `config/` changed (`git diff --stat 3399441 -- app database routes config` is empty). |
+| `CLAUDE.md`: no unrequested docs; do not delete tests | Complied | Only `README.md` (required by FR25) and the workflow documents changed; no test was deleted. The approved test changes (§11 item 4) were made with the same names; the two further test edits listed in the change log are called out. |
+| `CLAUDE.md`: Pint | Complied | `vendor/bin/pint --dirty --format agent` → passed (one new PHP file). |
+| Docker for everything | Deviation, approved | Only the two browser audit scripts run on the host (§11 items 1–2). |
 
 ## 12. Change log
 | Date | Change | Reason | Approved by |
 |---|---|---|---|
 | 2026-10-20 | Plan drafted from the approved PRD (including the hybrid retry decision PQ1). | `/workflow-plan` | — |
 | 2026-10-20 | Send timeout 3 s instead of 5 s; PRD AC-US4.4 and PQ8 reworded; §11 items 1–5 approved; `playwright-core` dev dependency approved. | User review of the plan | User |
+| 2026-10-20 | Implementation deviations, recorded for review (none changes server behaviour): (1) **seven banner shapes, not six:** `retrying` has its own shape `dot-ring` (§4 table, §6 `bannerFor`), because the PRD says Retrying looks like Pending (AC-US4.3) and also that all six states differ by shape alone (AC-US4.5); (2) `<x-result-banner>` takes `text-id` and `retry-id` props besides `id`, `bind` and `retry`, to keep the three banners' existing ids; (3) `createSubmitFlow` and `createSupervisorFlow` accept optional `sleep` and `waitsMs` options (tests inject a fake clock); (4) in the supervisor flow a 2xx with an unreadable body counts as no answer (it used to crash); (5) two further existing tests changed because 503 is now resent: the 503 entries of "a refusal from the server is a definitive error" (submit flow) and "other refusals are shown in words" (supervisor flow), and the unrelated tests that only needed an "unconfirmed" status now reach it through four failed sends (helper change, no assertion weakened); (6) the running stack serves assets baked into its images, so UI changes need `docker compose up -d --build --wait`. | Found while implementing T004, T007–T009, T012. | Pending the user's review (deviation 1 changes a shape set the plan named) |
