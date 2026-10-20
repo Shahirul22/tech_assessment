@@ -3,7 +3,7 @@
 
 import { quickAmounts, stepAmount } from './amount-controls.js';
 import { createSubmitFlow, fetchLog, fetchSnapshot } from './api.js';
-import { bannerFor, withTone } from './banner-model.js';
+import { bannerFor } from './banner-model.js';
 import { createConnection } from './connection.js';
 import { connectEcho } from './echo.js';
 import { createExpiryTimer } from './expiry-timer.js';
@@ -439,7 +439,7 @@ export function poolDashboard() {
 
         /** The full-width result of the last request, in words and a shape, or null (banner-model.js). */
         get banner() {
-            return withTone(bannerFor(this.status, { serverNowMs: Date.now() + (this.state.serverOffsetMs ?? 0), channel: 'request' }));
+            return bannerFor(this.status, { serverNowMs: Date.now() + (this.state.serverOffsetMs ?? 0), channel: 'request' });
         },
 
         get indicatorText() {

@@ -10,7 +10,7 @@
 import { OFFLINE_MESSAGE, fetchAudit, postCorrection, postRestock, randomKey } from './api.js';
 import { auditView, EMPTY_AUDIT_TEXT } from './audit-view.js';
 import { applyOwnCorrection, applyOwnRestock } from './pool-state.js';
-import { bannerFor, withTone } from './banner-model.js';
+import { bannerFor } from './banner-model.js';
 import { createRetryRunner } from './retry-policy.js';
 import { correctionProblem, restockProblem } from './supervisor-rules.js';
 
@@ -463,10 +463,10 @@ export function supervisorPart() {
         },
 
         get restockBanner() {
-            return withTone(bannerFor(this.restockStatus, {
+            return bannerFor(this.restockStatus, {
                 channel: 'restock',
                 doneText: (status) => `Added ${status.result.restock.amount} units. Remaining: ${status.result.pool.remaining}`,
-            }));
+            });
         },
 
         // Correction form state.
@@ -527,7 +527,7 @@ export function supervisorPart() {
         },
 
         get correctionBanner() {
-            return withTone(bannerFor(this.correctionStatus, {
+            return bannerFor(this.correctionStatus, {
                 channel: 'correction',
                 doneText: (status) => {
                     const { correction, pool } = status.result;
@@ -536,7 +536,7 @@ export function supervisorPart() {
                         ? `Voided entry #${correction.allocation_seq} (${correction.from} → 0). Remaining: ${pool.remaining}`
                         : `Entry #${correction.allocation_seq} changed ${correction.from} → ${correction.to}. Remaining: ${pool.remaining}`;
                 },
-            }));
+            });
         },
     };
 }

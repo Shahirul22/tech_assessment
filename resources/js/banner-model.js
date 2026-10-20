@@ -77,17 +77,3 @@ function done(status, { serverNowMs, channel, doneText }) {
 function banner(kind, shape, text, note = '', action = null) {
     return { kind, shape, text, note, action };
 }
-
-/**
- * Adds the `tone` and `message` the page's banner markup reads today. The markup moves to the model's own fields with
- * the result-banner component, and this goes with it.
- *
- * @param {Banner|null} model
- */
-export function withTone(model) {
-    if (model === null) {
-        return null;
-    }
-
-    return { ...model, tone: ['success', 'progress'].includes(model.kind) ? 'success' : 'warning', message: model.note };
-}

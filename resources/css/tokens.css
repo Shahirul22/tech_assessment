@@ -20,13 +20,14 @@
     --color-disabled-text: #3a3f47;
     --color-focus: #0a4fc4;
 
-    /* Type: a system font stack (nothing to download), a base big enough for a phone in daylight, and one very
-       large size for the number that matters. */
+    /* Type: a system font stack (nothing to download), a base big enough for a phone in daylight, one very large size
+       for the number that matters, and 24 px for every other key value (status, result, holdings, audit). */
     --font-family: system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
     --font-size-small: 1rem;
     --font-size-base: 1.125rem;
     --font-size-large: 1.375rem;
     --font-size-key-number: clamp(3.75rem, 14vw, 6.5rem);
+    --font-size-key-text: 1.5rem;
     --font-weight-normal: 500;
     --font-weight-strong: 700;
     --line-height: 1.4;

@@ -160,7 +160,7 @@
 
 ## Phase 4 — Sunlight, banners and layout (US2, US3, US6, US7)
 
-### [ ] T012 [US3] Build the `x-result-banner` component and use it three times
+### [x] T012 [US3] Build the `x-result-banner` component and use it three times
 - **Refs:** FR20, FR20.1, FR20.2, FR22.2, DD7, DD8, AC-US3.1–3.4
 - **Depends on:** T004, T009
 - **Files:** `resources/views/components/result-banner.blade.php` (create), `resources/views/dashboard.blade.php` (edit)
@@ -168,8 +168,9 @@
 - **Verify:** `NODE npm run build`; `APP php artisan view:clear`; then in the browser each of the three banners still appears with its words (as Ana: grant, partial, none; as Dana: restock +50, a refused raise), and Retry still works in each. `APP php artisan test --compact tests/Feature/DashboardViewTest.php` → passes.
 - **Done when:** the three banners are one component and every state from the banner model shows words and a shape slot (the shapes are drawn in T013).
 - **Out of scope:** the CSS for the shapes and sizes (T013).
+- **Note:** Boost `search-docs` queries: "blade anonymous components props", "blade components accessibility", "blade attributes merge class" (anonymous component in resources/views/components, `@props`, plain `{{ }}` for the prop values). Small deviation within the task: besides `id`, `bind`, `retry` the component takes `text-id` and `retry-id`, because the three banners keep three different ids for the words and the Retry button (`result-text`/`retry`, `restock-result-text`/`restock-retry`, `correction-result-text`/`correction-retry`). The temporary `withTone()` aliases were removed; the three getters return `bannerFor()` directly and `app.css` colours by `banner--{kind}`. `DashboardViewTest` passes. Browser at 360 px: Ana "4 granted", "96 granted", stale request "None granted — 0 of 3, none left" (class `banner--none`); Dana restock "Added 50 units. Remaining: 50", restock answer lost → "Not confirmed" + Retry → "Added 7 units. Remaining: 57". The correction banner uses the same component (refusal wording is covered by the supervisor-flow tests).
 
-### [ ] T013 [US2] Apply the sunlight standard: key-number sizes, shapes, 48 px controls
+### [x] T013 [US2] Apply the sunlight standard: key-number sizes, shapes, 48 px controls
 - **Refs:** FR20, FR22, FR22.1, FR22.2, FR22.3, FR23, DD8, DD11, AC-US1.8, AC-US2.1–2.4, AC-US3.1, AC-US7.1
 - **Depends on:** T006, T011, T012
 - **Files:** `resources/css/tokens.css` (edit), `resources/css/app.css` (edit)
@@ -177,8 +178,9 @@
 - **Verify:** `NODE npm test` → token test passes; `NODE npm run build`; in the browser (operator and supervisor): every tappable control ≥ 48 × 48 px; the banner spans the panel width at 360 px; in DevTools "Emulate vision deficiency: achromatopsia" the six states (Pending, Retrying automatically, Not confirmed, Retrying, Offline, Confirmed) can still be told apart by words and by shape.
 - **Done when:** AC-US2.2 (greyscale), AC-US2.3, AC-US3.1 (full width) and AC-US7.1 hold by hand; the automated measurement is T016.
 - **Out of scope:** a theme switch or dark mode (PQ4); changing the layout breakpoint.
+- **Note:** Pure CSS, no Boost query (the Vite build was run; the earlier `vite build assets blade` query of the plan applies). `--font-size-key-text: 1.5rem` on `.status`, banner text, `.holdings__row` and `.audit__text`; `.remaining__number` keeps the largest size (min 3.75 rem). Seven shapes drawn in CSS (the plan said six; `dot-ring` was added in T004): ring, dot-ring, cycle (↻), check (✓), triangle (!), cross (✕), bar-square. `.log__action` now `min-height: var(--control-height)`. Banner is a full-width flex row; Retry takes the full width under the words below 600 px. Greyscale (CSS `filter: grayscale(1)`, same effect as achromatopsia emulation): Pending ring, Retrying automatically ↻, Retrying ring with dot, Not confirmed triangle, Offline square with bar, Confirmed tick are all told apart by words and shape. Preliminary measurement at 360 px for Ana and for Dana (both tabs): no visible button, select, text input or choice label under 48 × 48; the automated measurement is T016. Token test passes (no token changed).
 
-### [ ] T014 [P] [US6] Fix the 360 px layout of both screens
+### [x] T014 [P] [US6] Fix the 360 px layout of both screens
 - **Refs:** FR24, FR24.1, NFR3, AC-US6.1, AC-US6.2, AC-US6.3
 - **Depends on:** T013
 - **Files:** `resources/css/app.css` (edit)
@@ -186,8 +188,9 @@
 - **Verify:** in the browser console at 360 px and at 1280 px as Ana and as Dana, on both tabs: `document.documentElement.scrollWidth <= window.innerWidth` → `true`; and `document.querySelector('#request-submit').getBoundingClientRect().bottom < document.querySelector('#log').getBoundingClientRect().top` → `true` at 360 × 640.
 - **Done when:** AC-US6.1–6.3 hold by hand.
 - **Out of scope:** new features; the automated overflow check (T016).
+- **Note:** Pure CSS, no Boost query. No change was needed: at 360 × 640 and 1280 × 800, as Ana and as Dana (pool and supervisor tabs), `scrollWidth` equals `innerWidth`, no element extends past the viewport (including a stress run with remaining 99999, a 59-character operator name and an unbroken 63-character message), and at 360 × 640 the submit button is above the log. At 1280 the log is in the right column, as designed.
 
-### [ ] T015 [US1] Add the page markup feature test
+### [x] T015 [US1] Add the page markup feature test
 - **Refs:** FR19, FR20.2, FR22.3, FR23, AC-US1.1, AC-US3.3, AC-US7.1
 - **Depends on:** T010, T012
 - **Files:** `tests/Feature/FieldReadyMarkupTest.php` (create)
@@ -195,6 +198,7 @@
 - **Verify:** `APP php artisan test --compact tests/Feature/FieldReadyMarkupTest.php` → pass; `APP vendor/bin/pint --dirty --format agent` → clean.
 - **Done when:** the markup hooks the audit and the older checks rely on cannot be removed unnoticed.
 - **Out of scope:** testing JS behaviour in PHP.
+- **Note:** Boost `search-docs` query: "pest feature test view assertions" (also "assertSee assertSeeHtml response content"). Created with `php artisan make:test --pest FieldReadyMarkupTest`; 5 tests, all pass with `DashboardViewTest` (16 tests); Pint passed. It asserts markup strings (ids, role, aria-label, three aria-hidden shapes), no styles.
 
 **Checkpoint 4:** the operator and supervisor screens at 360 px and 1280 px look final; each banner shows words and a shape; greyscale emulation still reads; `NODE npm test` and the touched feature tests green.
 

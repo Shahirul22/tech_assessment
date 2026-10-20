@@ -77,13 +77,7 @@
                         </div>
                     </form>
 
-                    <div id="result-banner" role="status">
-                        <p class="banner" x-show="banner" x-cloak x-bind:class="banner ? 'banner--' + banner.tone : ''">
-                            <span id="result-text" x-text="banner?.text"></span>
-                            <button class="button button--secondary" type="button" id="retry" x-show="isUnconfirmed" x-cloak x-on:click="retry()">Retry</button>
-                            <span class="banner__note" x-show="banner?.message" x-text="banner?.message"></span>
-                        </p>
-                    </div>
+                    <x-result-banner id="result-banner" text-id="result-text" retry-id="retry" bind="banner" retry="retry()" />
                 </section>
 
                 {{-- The viewer's own temporary units that are still held, and when each returns (FR13). --}}
@@ -136,13 +130,7 @@
                     <p class="hint hint--warning" id="restock-offline" x-show="isOffline" x-cloak>You are offline — nothing was sent</p>
                     <button class="button button--block" type="submit" id="restock-submit" x-bind:disabled="restockDisabled" x-text="restockLabel">Add units</button>
                 </div>
-                <div id="restock-result" role="status">
-                    <p class="banner" x-show="restockBanner" x-cloak x-bind:class="restockBanner ? 'banner--' + restockBanner.tone : ''">
-                        <span id="restock-result-text" x-text="restockBanner?.text"></span>
-                        <button class="button button--secondary" type="button" id="restock-retry" x-show="isRestockUnconfirmed" x-cloak x-on:click="retryRestock()">Retry</button>
-                        <span class="banner__note" x-show="restockBanner?.message" x-text="restockBanner?.message"></span>
-                    </p>
-                </div>
+                <x-result-banner id="restock-result" text-id="restock-result-text" retry-id="restock-retry" bind="restockBanner" retry="retryRestock()" />
             </form>
 
             <form class="supervisor__form" id="correction-form" novalidate aria-labelledby="correction-heading" x-on:submit.prevent="submitCorrection()">
@@ -179,13 +167,7 @@
                     <p class="hint hint--warning" id="correction-offline" x-show="isOffline" x-cloak>You are offline — nothing was sent</p>
                     <button class="button button--block" type="submit" id="correction-submit" x-bind:disabled="correctionDisabled" x-text="correctionLabel">Correct</button>
                 </div>
-                <div id="correction-result" role="status">
-                    <p class="banner" x-show="correctionBanner" x-cloak x-bind:class="correctionBanner ? 'banner--' + correctionBanner.tone : ''">
-                        <span id="correction-result-text" x-text="correctionBanner?.text"></span>
-                        <button class="button button--secondary" type="button" id="correction-retry" x-show="isCorrectionUnconfirmed" x-cloak x-on:click="retryCorrection()">Retry</button>
-                        <span class="banner__note" x-show="correctionBanner?.message" x-text="correctionBanner?.message"></span>
-                    </p>
-                </div>
+                <x-result-banner id="correction-result" text-id="correction-result-text" retry-id="correction-retry" bind="correctionBanner" retry="retryCorrection()" />
             </form>
 
             <section class="supervisor__audit" id="audit" aria-labelledby="audit-heading">

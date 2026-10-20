@@ -293,18 +293,28 @@ select {
     background: linear-gradient(currentColor, currentColor) center / 100% 2px no-repeat;
 }
 
-/* Result banner and notices: full width, text first */
+/* Result banner and notices: full width, a shape, then the words. The words carry the meaning; the shape is for the eye. */
 .banner {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-3);
     width: 100%;
     padding: var(--space-3) var(--space-4);
     border: var(--border-width) solid var(--color-border);
     border-radius: var(--radius);
-    font-size: var(--font-size-large);
+    font-size: var(--font-size-key-text);
     font-weight: var(--font-weight-strong);
 }
 
-.banner .button {
-    margin-inline-start: var(--space-3);
+.banner__body {
+    flex: 1 1 12rem;
+    min-width: 0;
+    overflow-wrap: anywhere;
+}
+
+.banner__text {
+    display: block;
 }
 
 .banner__note {
@@ -313,12 +323,107 @@ select {
     font-size: var(--font-size-base);
 }
 
+/* Retry sits beside the words on a wide panel and takes the full width under them on a phone. */
+.banner__retry {
+    flex: 1 1 100%;
+}
+
+@media (min-width: 600px) {
+    .banner__retry {
+        flex: 0 0 auto;
+    }
+}
+
+/* The shapes (aria-hidden): each has its own outline or inside, so a state can be told apart without colour. */
+.banner__shape {
+    display: inline-flex;
+    flex: none;
+    align-items: center;
+    justify-content: center;
+    width: 1.5rem;
+    height: 1.5rem;
+    font-size: 1rem;
+    line-height: 1;
+}
+
+/* Pending: a hollow ring. */
+.banner__shape--ring {
+    border: 3px solid currentColor;
+    border-radius: 50%;
+}
+
+/* Retrying (manual): a ring with a dot. */
+.banner__shape--dot-ring {
+    border: 3px solid currentColor;
+    border-radius: 50%;
+    background: radial-gradient(circle, currentColor 0 28%, transparent 32%);
+}
+
+/* Retrying automatically: a ring with a turning arrow. */
+.banner__shape--cycle {
+    border: 3px solid currentColor;
+    border-radius: 50%;
+}
+
+.banner__shape--cycle::before {
+    content: '\21BB';
+}
+
+/* Confirmed: a filled rounded square with a tick. */
+.banner__shape--check {
+    border-radius: 0.3rem;
+    background: currentColor;
+}
+
+.banner__shape--check::before {
+    content: '\2713';
+    color: var(--color-bg);
+    font-weight: var(--font-weight-strong);
+}
+
+/* Not confirmed, partly granted, none granted: a filled triangle with a mark. */
+.banner__shape--triangle {
+    background: currentColor;
+    clip-path: polygon(50% 0, 100% 100%, 0 100%);
+    padding-top: 0.45rem;
+}
+
+.banner__shape--triangle::before {
+    content: '!';
+    color: var(--color-warning-bg);
+    font-weight: var(--font-weight-strong);
+}
+
+/* Refused or failed: a filled octagon with a cross. */
+.banner__shape--cross {
+    background: currentColor;
+    clip-path: polygon(30% 0, 70% 0, 100% 30%, 100% 70%, 70% 100%, 30% 100%, 0 70%, 0 30%);
+}
+
+.banner__shape--cross::before {
+    content: '\2715';
+    color: var(--color-warning-bg);
+    font-weight: var(--font-weight-strong);
+}
+
+/* Offline: a square with a bar, the same as the connection indicator. */
+.banner__shape--bar-square {
+    border: 3px solid currentColor;
+    background: linear-gradient(currentColor, currentColor) center / 100% 3px no-repeat;
+}
+
+.banner--progress,
 .banner--success {
     border-color: var(--color-accent-strong);
     background: var(--color-own-bg);
 }
 
-.banner--warning {
+.banner--partial,
+.banner--none,
+.banner--refused,
+.banner--unconfirmed,
+.banner--offline,
+.banner--error {
     border-color: var(--color-warning);
     background: var(--color-warning-bg);
     color: var(--color-warning);
@@ -404,7 +509,7 @@ select {
 /* The viewer's own status: words after a label */
 .status {
     margin-top: var(--space-3);
-    font-size: var(--font-size-large);
+    font-size: var(--font-size-key-text);
     font-weight: var(--font-weight-strong);
 }
 
@@ -457,6 +562,8 @@ select {
 
 .holdings__row {
     min-height: var(--control-height);
+    font-size: var(--font-size-key-text);
+    font-weight: var(--font-weight-strong);
     display: flex;
     align-items: center;
     padding: var(--space-2) 0;
@@ -491,7 +598,7 @@ select {
 .log__action {
     margin-inline-start: var(--space-2);
     padding: 0 var(--space-3);
-    min-height: 2rem;
+    min-height: var(--control-height);
 }
 
 .supervisor__audit {
@@ -521,6 +628,7 @@ select {
 }
 
 .audit__text {
+    font-size: var(--font-size-key-text);
     font-weight: var(--font-weight-strong);
 }
 
