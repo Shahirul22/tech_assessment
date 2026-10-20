@@ -211,6 +211,42 @@ select {
     color: var(--color-accent-strong);
 }
 
+/* A tap is acknowledged at once: the border thickens while the control is held down. */
+.button:active:not(:disabled) {
+    box-shadow: inset 0 0 0 var(--border-width) var(--color-accent-strong);
+    background: var(--color-own-bg);
+}
+
+.button--secondary:active:not(:disabled) {
+    color: var(--color-accent-strong);
+}
+
+/* Quick amounts and the stepper (M4): one thumb-sized block above the submit button. */
+.stepper__button {
+    min-width: var(--touch-min);
+    padding: 0;
+    font-size: var(--font-size-large);
+}
+
+.quick-amounts {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+}
+
+.quick-amounts__button {
+    min-width: var(--touch-min);
+    padding-inline: var(--space-4);
+    font-size: var(--font-size-large);
+}
+
+/* Not usable is shown by a dashed border and a strike-through as well as the grey, never by colour alone. */
+.stepper__button:disabled,
+.quick-amounts__button:disabled {
+    border-style: dashed;
+    text-decoration: line-through;
+}
+
 /* Connection indicator: words plus a shape, never colour alone */
 .indicator {
     display: inline-flex;

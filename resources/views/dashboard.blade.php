@@ -45,8 +45,10 @@
                         <div class="field">
                             <label class="field__label" for="requested">How many?</label>
                             <div class="field__row">
+                                <button class="button button--secondary stepper__button" type="button" id="amount-decrease" aria-label="Decrease" x-bind:disabled="!canDecrease" x-on:click="step(-1)">−</button>
                                 <input class="input" id="requested" name="requested" type="number" inputmode="numeric" min="1" step="1" autocomplete="off"
                                     x-model="amount" x-on:input="amountChanged()" x-bind:max="maxAmount" x-bind:aria-invalid="amountMessage !== ''" aria-describedby="requested-hint requested-message">
+                                <button class="button button--secondary stepper__button" type="button" id="amount-increase" aria-label="Increase" x-bind:disabled="!canIncrease" x-on:click="step(1)">+</button>
                                 <span class="hint" id="requested-hint" x-text="leftText"></span>
                             </div>
                             <p class="hint hint--warning" id="requested-message" role="alert" x-text="amountMessage"></p>
@@ -63,6 +65,12 @@
                                 </label>
                             </fieldset>
                             <p class="hint" id="type-hint" x-show="type === 'temporary'" x-cloak x-text="windowHint"></p>
+
+                            <div class="quick-amounts" id="quick-amounts" role="group" aria-label="Quick amounts">
+                                <template x-for="item in quickAmountList" x-bind:key="item.label">
+                                    <button class="button button--secondary quick-amounts__button" type="button" x-bind:disabled="!item.usable" x-text="item.label" x-on:click="pickAmount(item.value)"></button>
+                                </template>
+                            </div>
 
                             <p class="hint hint--warning" id="offline-message" x-show="isOffline" x-cloak>You are offline — nothing was sent</p>
                             <button class="button button--block" type="submit" id="request-submit" x-bind:disabled="submitDisabled" x-text="submitLabel">Request</button>

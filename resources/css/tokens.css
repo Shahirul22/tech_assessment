@@ -41,7 +41,8 @@
     --radius: 0.5rem;
     --border-width: 2px;
     --focus-width: 3px;
-    --control-height: 3rem;
+    --touch-min: 48px;
+    --control-height: max(var(--touch-min), 3rem);
     --page-max-width: 72rem;
     --column-form-width: 26rem;
     --breakpoint-wide: 900px;

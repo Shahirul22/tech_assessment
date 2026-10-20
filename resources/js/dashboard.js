@@ -1,6 +1,7 @@
 // The Alpine component behind the dashboard: it glues the pure modules (pool-state, log-renderer, viewer, connection)
 // to the page. The logic lives in those modules and is tested there; this file only wires them to the DOM and the network.
 
+import { quickAmounts, stepAmount } from './amount-controls.js';
 import { createSubmitFlow, fetchLog, fetchSnapshot } from './api.js';
 import { bannerFor, withTone } from './banner-model.js';
 import { createConnection } from './connection.js';
@@ -171,6 +172,21 @@ export function poolDashboard() {
             return submitFlow?.retry();
         },
 
+        /** A quick amount tap: it fills the field, it never adds to it and never submits (DD10). */
+        pickAmount(value) {
+            this.amount = String(value);
+            this.amountChanged();
+        },
+
+        /** The + and − buttons: one more or one less, kept between 1 and what is left. Never submits. */
+        step(delta) {
+            const next = stepAmount(this.amount, delta, this.state.remaining);
+
+            if (next !== null) {
+                this.pickAmount(next);
+            }
+        },
+
         /** Typing clears an old result so a stale banner is not mistaken for the new request. */
         amountChanged() {
             if (this.status.state === 'done' || this.status.state === 'error') {
@@ -331,6 +347,30 @@ export function poolDashboard() {
 
         get maxAmount() {
             return maxAmount(this.state.remaining);
+        },
+
+        /** The quick-amount buttons for the remaining last shown; the ones above it are listed but not usable. */
+        get quickAmountList() {
+            return quickAmounts(this.state.remaining);
+        },
+
+        /** The field as a number, 0 when it holds nothing readable (the same reading the stepper uses). */
+        get amountValue() {
+            const text = String(this.amount ?? '').trim();
+
+            return /^[0-9]+$/.test(text) ? Number(text) : 0;
+        },
+
+        get canDecrease() {
+            const next = stepAmount(this.amount, -1, this.state.remaining);
+
+            return next !== null && next !== this.amountValue;
+        },
+
+        get canIncrease() {
+            const next = stepAmount(this.amount, 1, this.state.remaining);
+
+            return next !== null && next !== this.amountValue;
         },
 
         get leftText() {

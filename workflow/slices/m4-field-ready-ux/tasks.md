@@ -134,7 +134,7 @@
 
 ## Phase 3 — One-thumb request (US1, P1)
 
-### [ ] T010 [US1] Add the quick-amount row and the stepper to the request form
+### [x] T010 [US1] Add the quick-amount row and the stepper to the request form
 - **Refs:** FR19, FR19.1, FR19.2, FR19.3, FR19.4, DD9, DD10, AC-US1.1–1.7
 - **Depends on:** T005, T009
 - **Files:** `resources/views/dashboard.blade.php` (edit), `resources/js/dashboard.js` (edit)
@@ -142,8 +142,9 @@
 - **Verify:** `NODE npm run build`, then in a browser as Ana: tap 5 → field shows 5; tap + twice → 7; tap − ten times → 1; "All (N)" fills N; type 2.5 → "Enter a whole number" and submit disabled; with remaining 0 (use Ben to take the rest) all controls are disabled and the form says "0 left"; Ben takes units while Ana's field shows 10 → within 2 s quick amounts above the new remaining are disabled and the field flags "Only N left" without changing her number.
 - **Done when:** AC-US1.1–1.6 behave as written (the unit part is in T005).
 - **Out of scope:** touch-target sizing and look (T011, T013); one-tap submit (rejected in DD10).
+- **Note:** Boost `search-docs` queries: "blade anonymous components props", "blade components accessibility", "blade attributes merge class" (no component added here; the docs confirm plain markup needs nothing). Added `quickAmountList`, `amountValue`, `canDecrease`, `canIncrease`, `pickAmount`, `step` to dashboard.js; markup ids `amount-decrease`, `amount-increase`, `quick-amounts`. Browser check at 360 px as Ana (headless Chromium): tap 5 → 5; + + → 7; − ×10 → 1 with − disabled; All (94) → 94; "2.5" → "Enter a whole number" and submit disabled; with 10 typed and Ben taking units live, remaining 5 appeared within the 2.5 s wait, hint "5 left", message "Only 5 left", field still 10, quick amounts 1 and 5 usable and 10 disabled; at 0 the hint says "0 left", the submit label reads "0 left" and every control is disabled. The quick-amount row sits directly above the offline message and submit, after the Kind choice.
 
-### [ ] T011 [US1] Style the quick amounts and stepper for a thumb
+### [x] T011 [US1] Style the quick amounts and stepper for a thumb
 - **Refs:** FR19, FR19.1, FR23, DD11, AC-US1.8
 - **Depends on:** T010
 - **Files:** `resources/css/tokens.css` (edit), `resources/css/app.css` (edit)
@@ -151,6 +152,7 @@
 - **Verify:** `NODE npm run build`; at 360 × 640 in the browser, the amount controls and submit button are visible without scrolling past the log, and in DevTools each quick-amount and stepper button measures ≥ 48 × 48 px with ≥ 8 px between neighbours.
 - **Done when:** AC-US1.8 holds for the amount controls (the whole-page check is T016).
 - **Out of scope:** recolouring, banners, supervisor controls.
+- **Note:** Pure CSS, no Boost query. `--touch-min: 48px`, `--control-height: max(var(--touch-min), 3rem)`; pressed `:active` style; unusable controls get a dashed border and strike-through. Measured at 360 × 640: stepper buttons 48 × 48, quick amounts 51 × 51 (All (94) 127 × 51), submit 48 high; neighbour gaps are 8–12 px (flex gap `--space-2`/`--space-3`); controls and submit end at y = 460 of 640 and the submit is above the log; `scrollWidth` 360 = `innerWidth`. Checkpoint 3: after a reseed, tap 5 then Request sent one POST and showed "5 granted" (remaining 100 → 95). The demo data was reseeded (`migrate:fresh --seed --force`) after these checks.
 
 **Checkpoint 3:** at 360 px, tap "5" then submit (two taps, no keyboard) → request sent once; "All (N)" fills the remaining; at 0 left everything is unusable and says "0 left"; the buttons measure ≥ 48 px.
 
