@@ -239,7 +239,7 @@ So recalculation after a correction covers expiry and status automatically once 
 - Status transitions are tested.
 - An allocation logged as Silver keeps its window after the operator becomes Gold.
 
-### M3. Supervisor corrections and restock (size M, ~25%)
+### M3. Supervisor corrections and restock (size M, ~25%) - IMPLEMENTED
 
 **Usable deliverable:**
 
@@ -255,7 +255,7 @@ So recalculation after a correction covers expiry and status automatically once 
 - Correcting an expired entry changes history only.
 - A correction racing an operator submit leaves a consistent pool.
 
-### M4. Field-ready UX and submission (size S–M, ~15%)
+### M4. Field-ready UX and submission (size S–M, ~15%) - IMPLEMENTED
 
 **Usable deliverable:** the version you would hand to a warehouse operator.
 
