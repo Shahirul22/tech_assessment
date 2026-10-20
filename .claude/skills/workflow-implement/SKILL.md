@@ -27,7 +27,7 @@ For each selected task, in dependency order (check `Depends on` are `[x]`; if no
 4. **Verify:** run the task's `Verify` command(s) and any relevant existing tests. A task is done only when they pass and the `Done when` condition is observably true. Report real output; if something fails, fix the cause. Never weaken, skip or delete a test to get green; never claim done without having run the check.
 5. **Compliance pass:** re-read the diff against the rules (and principles, if defined) that applied; fix violations now.
 6. Mark `[x]`. Append a one-line note under the task if something non-obvious happened (command used, small decision). Do not touch other tasks' status.
-7. Follow the commit policy in tasks.md Conventions. Commit only if the user asked or the policy says so.
+7. Do not commit per task. Commits happen at phase completion (section 4), unless tasks.md Conventions or the user say otherwise.
 
 ## 3. Deviations
 Reality sometimes disagrees with the docs:
@@ -37,9 +37,43 @@ Reality sometimes disagrees with the docs:
 - **Discovered work not in the task list:** do not do it. Report it so a task can be added.
 
 ## 4. Checkpoints and finishing
-- At the end of a phase, run its checkpoint check and report what a human can now run and what they should see. **Stop and wait** for review before the next phase unless the user said to continue.
+- At the end of a phase, run its checkpoint check and report what a human can now run and what they should see. **Commit the phase** (see "Phase commits" below), then **stop and wait** for review before the next phase unless the user said to continue.
 - When all tasks are `[x]` and the slice's AC pass, set tasks.md `Status: Done` only if the user agrees; point to any `Done when` items from `requirement.md` that were verified.
 - Final report each run: tasks completed (IDs), verification output summary, deviations, blocked items, next task.
+
+## 5. Phase commits
+A phase is a `## Phase N — <name>` section of the slice's tasks.md, ending in its `**Checkpoint N:**` line. Make one commit per phase, when it is complete: every task under that heading is `[x]` (or `[!]` with the reason noted) and its checkpoint check has passed. The commit covers the whole phase (all its tasks together), never a single task. Never commit a phase whose checkpoint or Verify commands are failing. A partially done phase (stopped early, or the user asked for a single task) is not committed unless the user asks.
+
+1. **Stage deliberately.** Review `git status` and `git diff`; stage by explicit path for the files this phase touched (code, tests, migrations, `tasks.md` status updates, and any plan Change log rows). Never `git add -A` blindly. Never stage `.env*` (except `.env.example`), secrets, `vendor/`, `node_modules/`, `.codegraph/` or build output. If unrelated changes are present, leave them out and mention them.
+2. **Format first.** If PHP files changed, `vendor/bin/pint --dirty --format agent` must have been run, so the commit is already clean.
+3. **Message: [Conventional Commits 1.0.0](https://www.conventionalcommits.org/en/v1.0.0/).**
+
+   ```
+   <type>(<scope>): <description>
+
+   <body>
+
+   <footer>
+   ```
+   - **type**: `feat` (new behaviour), `fix` (bug fix), `refactor`, `test`, `docs`, `build` (Docker, dependencies), `ci`, `perf`, `style`, `chore`. Pick the one that matches the phase's main effect; a phase mixing a feature with its tests is `feat`. Use `!` after the type/scope and a `BREAKING CHANGE:` footer if an API contract changed incompatibly.
+   - **scope**: the slice id, lowercase, e.g. `m3`; a narrower area may follow, e.g. `m3/audit`.
+   - **description**: imperative mood ("add", not "added"), lowercase start, no trailing period, 72 characters or fewer for the whole first line. Say what the phase delivers, taken from the phase's heading and goal in tasks.md (e.g. "Phase 2 — Writers" → `add restock and correction writers`), not just its number.
+   - **body** (blank line before it, wrapped at about 72): what changed and why, the phase (`Phase 2 — Writers`) and its task IDs (e.g. `Tasks: T010–T015`). Add the checkpoint result in one line (command and outcome). Mention deviations or blocked tasks if any. Explain, don't list every file.
+   - **footer**: `BREAKING CHANGE: ...` when applicable, then the attribution trailer the session prescribes (e.g. `Co-Authored-By: ...`). Never invent trailers or references.
+
+   Example:
+   ```
+   feat(m3): add restock and correction writers
+
+   Phase 2 — Writers. RestockService and CorrectionService append to the
+   shared ledger under the pool lock and announce after commit; replays
+   are idempotent and corrections around expiry are covered.
+
+   Tasks: T010-T015
+   Checkpoint 2: php artisan test passes (212 tests).
+   ```
+4. **Commit only; do not push** unless the user asks. Do not amend earlier commits, skip hooks (`--no-verify`) or rewrite history. If a hook fails, fix the cause and make a new commit.
+5. Report the commit hash and subject line in the phase report.
 
 ## Do not
 - Work outside the selected scope or the files a task names (without asking).

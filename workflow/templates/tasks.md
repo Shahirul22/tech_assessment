@@ -24,7 +24,7 @@ Rules for whoever fills this in:
 
 ## Conventions
 - Read before every task: `workflow/rules/*` (if any).
-- Commit/stop policy: <e.g. one commit per task; stop at each checkpoint for human review>.
+- Commit/stop policy: <e.g. one commit per phase, after its checkpoint passes; stop at each checkpoint for human review>.
 
 ## Phase 0 — Setup
 ### [ ] T001 <imperative title>
